@@ -1,0 +1,36 @@
+"""Celery application configuration with Redis broker and result backend."""
+
+from __future__ import annotations
+
+from celery import Celery
+
+from src.config import get_settings
+
+settings = get_settings()
+
+celery_app = Celery(
+    "ai_email_agent",
+    broker=settings.celery_broker_url,
+    backend=settings.celery_result_backend,
+)
+
+celery_app.conf.update(
+    # Concurrency support for up to 10 simultaneous tasks
+    worker_concurrency=settings.celery_max_concurrency,
+    # Serialization
+    task_serializer="json",
+    result_serializer="json",
+    accept_content=["json"],
+    # Timezone
+    timezone="UTC",
+    enable_utc=True,
+    # Task settings
+    task_track_started=True,
+    task_acks_late=True,
+    worker_prefetch_multiplier=1,
+    # Result expiration (1 hour)
+    result_expires=3600,
+)
+
+# Auto-discover tasks in the src.tasks package
+celery_app.autodiscover_tasks(["src.tasks"])

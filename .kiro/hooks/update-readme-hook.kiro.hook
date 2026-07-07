@@ -1,0 +1,13 @@
+{
+  "enabled": true,
+  "name": "Update README on changes",
+  "description": "After any task execution completes, review what was implemented and update the root README.md and docs/architecture.md to reflect the current state of the project.",
+  "version": "1",
+  "when": {
+    "type": "postTaskExecution"
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "A task was just completed. Review what was implemented and update README.md and docs/architecture.md if needed to reflect new components, commands, or capabilities that were added. Keep updates concise — only add what's new."
+  }
+}
