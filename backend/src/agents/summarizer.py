@@ -1,4 +1,4 @@
-"""Summarizer Agent — generates email summaries using OpenAI LLM."""
+"""Summarizer Agent — generates email summaries using Google Gemini LLM."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import logging
 import re
 from typing import List, Optional
 
-from openai import AsyncOpenAI
+import google.generativeai as genai
 
 from src.config import get_settings
 from src.models.email import RawEmail
@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 class SummarizerAgent:
-    """Summarizes emails and extracts action items using OpenAI LLM."""
+    """Summarizes emails and extracts action items using Google Gemini LLM."""
 
     WORD_THRESHOLD = 200
 
@@ -29,14 +29,16 @@ class SummarizerAgent:
         timeout: int = 8,
     ) -> None:
         settings = get_settings()
-        self._api_key = api_key or settings.openai_api_key
-        self._model_name = model or settings.openai_model
+        self._api_key = api_key or settings.gemini_api_key
+        self._model_name = model or settings.gemini_model
         self._timeout = timeout
 
-        self._client = AsyncOpenAI(api_key=self._api_key)
+        # Configure the Gemini SDK
+        genai.configure(api_key=self._api_key)
+        self._model = genai.GenerativeModel(self._model_name)
 
     async def summarize(self, email: RawEmail) -> SummaryResult:
-        """Generate summary within timeout.
+        """Generate summary within 8s timeout.
 
         Returns fallback summary on LLM failure/timeout.
         """
@@ -52,7 +54,7 @@ class SummarizerAgent:
 
         try:
             raw_output = await asyncio.wait_for(
-                self._call_openai(prompt),
+                self._call_gemini(prompt),
                 timeout=self._timeout,
             )
             return self._parse_summary(raw_output)
@@ -72,6 +74,7 @@ Rules:
 - Summary must be at most 3 sentences
 - Extract up to 10 action items (things the recipient needs to do)
 - If there are no action items, return an empty list
+- Preserve critical details including dates, amounts, and named entities
 
 Return ONLY valid JSON with the following fields:
 - "summary": string (max 3 sentences)
@@ -82,7 +85,7 @@ Email details:
 - Subject: {email.subject}
 - Body: {email.body[:3000]}
 
-Respond with ONLY the JSON object, no additional text."""
+Respond with ONLY the JSON object, no additional text or formatting."""
 
     def fallback_summary(self, email: RawEmail) -> SummaryResult:
         """Return first 3 sentences as fallback when LLM fails."""
@@ -128,11 +131,11 @@ Respond with ONLY the JSON object, no additional text."""
             action_items=action_items,
         )
 
-    async def _call_openai(self, prompt: str) -> str:
-        """Call OpenAI API and return raw text response."""
-        response = await self._client.chat.completions.create(
-            model=self._model_name,
-            messages=[{"role": "user", "content": prompt}],
-            response_format={"type": "json_object"},
-        )
-        return response.choices[0].message.content or ""
+    async def _call_gemini(self, prompt: str) -> str:
+        """Call Gemini API and return raw text response."""
+        response = await self._model.generate_content_async(prompt)
+
+        if response.text is None:
+            raise RuntimeError("Gemini returned empty response")
+
+        return response.text
