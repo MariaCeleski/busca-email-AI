@@ -1,16 +1,27 @@
 /**
  * Dashboard page — paginated email list with filters.
- * Max 50 emails per page display.
+ * Displays emails flagged for manual review (confidence < 0.75)
+ * in a distinct visual section above the main email list.
+ * Max 50 emails per page, configurable page size (default 20).
+ *
+ * Requirements: 7.1, 7.2, 7.8
  */
 
-import { useEmails } from '../hooks/useEmails'
+import { useState } from 'react'
+import { useEmails, useReviewEmails } from '../hooks/useEmails'
 import { useWebSocket } from '../hooks/useWebSocket'
 import { EmailList } from '../components/EmailList'
+import { ReviewSection } from '../components/ReviewSection'
 import { FilterBar } from '../components/FilterBar'
+import { Pagination } from '../components/Pagination'
 
-const PAGE_SIZE = 50
+const DEFAULT_PAGE_SIZE = 20
+const MAX_PAGE_SIZE = 50
+const PAGE_SIZE_OPTIONS = [10, 20, 30, 50]
 
 export function Dashboard() {
+  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE)
+
   const {
     emails,
     total,
@@ -22,14 +33,27 @@ export function Dashboard() {
     setFilters,
     setPage,
     refresh,
-  } = useEmails(PAGE_SIZE)
+  } = useEmails(pageSize)
+
+  const {
+    emails: reviewEmails,
+    loading: reviewLoading,
+    refresh: refreshReview,
+  } = useReviewEmails()
 
   // Real-time updates — refresh on new email events
   useWebSocket((message) => {
     if (message.type === 'email_processed' || message.type === 'email_classified') {
       refresh()
+      refreshReview()
     }
   })
+
+  const handlePageSizeChange = (newSize: number) => {
+    const clampedSize = Math.min(newSize, MAX_PAGE_SIZE)
+    setPageSize(clampedSize)
+    setPage(1) // Reset to first page when page size changes
+  }
 
   return (
     <div className="page-container">
@@ -37,11 +61,16 @@ export function Dashboard() {
         <h1>Email Dashboard</h1>
         <div className="header-actions">
           <span className="email-count">{total} emails total</span>
-          <button onClick={refresh} className="btn btn-secondary" disabled={loading}>
+          <button onClick={() => { refresh(); refreshReview() }} className="btn btn-secondary" disabled={loading}>
             Refresh
           </button>
         </div>
       </div>
+
+      {/* Manual Review Section - distinct visual section at the top */}
+      {!reviewLoading && reviewEmails.length > 0 && (
+        <ReviewSection emails={reviewEmails} />
+      )}
 
       <FilterBar filters={filters} onFiltersChange={setFilters} />
 
@@ -53,27 +82,15 @@ export function Dashboard() {
         <EmailList emails={emails} />
       )}
 
-      {totalPages > 1 && (
-        <div className="pagination">
-          <button
-            onClick={() => setPage(page - 1)}
-            disabled={page <= 1}
-            className="btn btn-secondary"
-          >
-            Previous
-          </button>
-          <span className="page-info">
-            Page {page} of {totalPages}
-          </span>
-          <button
-            onClick={() => setPage(page + 1)}
-            disabled={page >= totalPages}
-            className="btn btn-secondary"
-          >
-            Next
-          </button>
-        </div>
-      )}
+      {/* Pagination with page numbers, configurable page size */}
+      <Pagination
+        page={page}
+        totalPages={totalPages}
+        pageSize={pageSize}
+        pageSizeOptions={PAGE_SIZE_OPTIONS}
+        onPageChange={setPage}
+        onPageSizeChange={handlePageSizeChange}
+      />
     </div>
   )
 }

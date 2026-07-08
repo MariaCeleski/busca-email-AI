@@ -8,6 +8,10 @@ export type WebSocketMessageType =
   | 'email_summarized'
   | 'reply_generated'
   | 'connection_established'
+  | 'auth_suspended'
+  | 'send_failed'
+  | 'deletion_complete'
+  | 'deletion_failed'
 
 export interface WebSocketMessage {
   type: WebSocketMessageType
