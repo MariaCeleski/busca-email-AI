@@ -1,12 +1,17 @@
-"""ChromaDB Vector Store Service — stores and retrieves email embeddings."""
+"""ChromaDB Vector Store Service — stores and retrieves email embeddings.
+
+Uses Google Gemini embedding model (gemini-embedding-001) for generating
+3072-dimensional embeddings and ChromaDB for vector storage and retrieval.
+"""
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Dict, List, Optional
 
 import chromadb
-from openai import OpenAI
+import google.generativeai as genai
 
 from src.config import get_settings
 from src.models.vector_store import EmailMetadata, MetadataFilter, SearchResult
@@ -15,7 +20,11 @@ logger = logging.getLogger(__name__)
 
 
 class VectorStoreService:
-    """Manages email embeddings storage and similarity search using ChromaDB."""
+    """Manages email embeddings storage and similarity search using ChromaDB.
+
+    Uses gemini-embedding-001 for generating 3072-dimensional embeddings
+    and ChromaDB for cosine similarity search with metadata filtering.
+    """
 
     def __init__(
         self,
@@ -25,10 +34,12 @@ class VectorStoreService:
         settings = get_settings()
         self._collection_name = collection_name or settings.chromadb_collection_name
         self._persist_directory = persist_directory or settings.chromadb_persist_directory
-        self._embedding_model = settings.openai_embedding_model
+        self._embedding_model = f"models/{settings.gemini_embedding_model}"
 
-        self._openai_client = OpenAI(api_key=settings.openai_api_key)
+        # Configure Gemini API
+        genai.configure(api_key=settings.gemini_api_key)
 
+        # Initialize ChromaDB client
         self._client = chromadb.Client(
             chromadb.Settings(
                 persist_directory=self._persist_directory,
@@ -41,21 +52,27 @@ class VectorStoreService:
         )
 
     def _generate_embedding(self, text: str) -> List[float]:
-        """Generate embedding vector using OpenAI embedding model."""
-        result = self._openai_client.embeddings.create(
+        """Generate embedding vector using Gemini embedding model.
+
+        Args:
+            text: Text content to embed.
+
+        Returns:
+            3072-dimensional embedding vector.
+        """
+        result = genai.embed_content(
             model=self._embedding_model,
-            input=text,
+            content=text,
         )
-        return result.data[0].embedding
+        return result["embedding"]
 
-    def _generate_query_embedding(self, text: str) -> List[float]:
-        """Generate embedding vector for a query using OpenAI embedding model."""
-        return self._generate_embedding(text)
-
-    def store_embedding(
+    async def store_embedding(
         self, email_id: str, text: str, metadata: EmailMetadata
     ) -> str:
         """Generate embedding via Gemini and store in ChromaDB.
+
+        If a document with the same provider_message_id already exists,
+        the insertion is skipped and the existing record ID is returned.
 
         Args:
             email_id: Unique identifier for the email.
@@ -65,7 +82,23 @@ class VectorStoreService:
         Returns:
             The record ID stored in ChromaDB.
         """
-        embedding = self._generate_embedding(text)
+        # Check for duplicate by provider_message_id (Requirement 5.5)
+        if self.is_duplicate(metadata.provider_message_id):
+            existing = self._collection.get(
+                where={"provider_message_id": metadata.provider_message_id},
+                include=["metadatas"],
+            )
+            existing_id = existing["ids"][0] if existing["ids"] else f"emb_{email_id}"
+            logger.info(
+                "Duplicate embedding skipped for provider_message_id=%s, "
+                "returning existing record_id=%s",
+                metadata.provider_message_id,
+                existing_id,
+            )
+            return existing_id
+
+        # Generate embedding in a thread to avoid blocking the event loop
+        embedding = await asyncio.to_thread(self._generate_embedding, text)
 
         record_id = f"emb_{email_id}"
 
@@ -79,6 +112,8 @@ class VectorStoreService:
         }
         if metadata.thread_id:
             chroma_metadata["thread_id"] = metadata.thread_id
+        if metadata.user_id:
+            chroma_metadata["user_id"] = metadata.user_id
 
         self._collection.upsert(
             ids=[record_id],
@@ -90,13 +125,16 @@ class VectorStoreService:
         logger.info("Stored embedding for email_id=%s as record_id=%s", email_id, record_id)
         return record_id
 
-    def search_similar(
+    async def search_similar(
         self,
         query_text: str,
         k: int = 5,
         filters: Optional[MetadataFilter] = None,
     ) -> List[SearchResult]:
         """Find top-k similar emails by cosine similarity.
+
+        Metadata filters (sender, date_range, category) are applied before
+        similarity ranking via ChromaDB's where clause.
 
         Args:
             query_text: Text to find similar emails for.
@@ -106,7 +144,8 @@ class VectorStoreService:
         Returns:
             List of SearchResult sorted by similarity descending.
         """
-        query_embedding = self._generate_query_embedding(query_text)
+        # Generate query embedding in a thread to avoid blocking
+        query_embedding = await asyncio.to_thread(self._generate_embedding, query_text)
 
         where_filter = self._build_where_filter(filters)
 
@@ -122,18 +161,18 @@ class VectorStoreService:
 
         return self._parse_search_results(results)
 
-    def delete_by_user(self, user_id: str) -> int:
-        """Delete all embeddings for a user (by sender field).
+    async def delete_by_user(self, user_id: str) -> int:
+        """Delete all embeddings for a user.
 
         Args:
-            user_id: The user/sender identifier to delete embeddings for.
+            user_id: The user identifier to delete embeddings for.
 
         Returns:
             Count of records deleted.
         """
-        # Get all records matching user_id in sender metadata
+        # Get all records matching user_id in metadata
         existing = self._collection.get(
-            where={"sender": user_id},
+            where={"user_id": user_id},
             include=["metadatas"],
         )
 
@@ -161,7 +200,11 @@ class VectorStoreService:
         return len(existing["ids"]) > 0
 
     def _build_where_filter(self, filters: Optional[MetadataFilter]) -> Optional[Dict]:
-        """Build ChromaDB where filter from MetadataFilter."""
+        """Build ChromaDB where filter from MetadataFilter.
+
+        Metadata filters are applied before similarity ranking as per
+        Requirement 5.4.
+        """
         if filters is None:
             return None
 
@@ -218,6 +261,7 @@ class VectorStoreService:
                 category=EmailCategory(meta["category"]),
                 provider_message_id=meta["provider_message_id"],
                 thread_id=meta.get("thread_id"),
+                user_id=meta.get("user_id"),
             )
 
             search_results.append(
@@ -229,6 +273,6 @@ class VectorStoreService:
                 )
             )
 
-        # Sort by similarity descending
+        # Sort by similarity descending (Requirement 5.2)
         search_results.sort(key=lambda r: r.similarity_score, reverse=True)
         return search_results
