@@ -12,13 +12,7 @@ from src.models.enums import EmailCategory
 from src.models.vector_store import EmailMetadata, MetadataFilter, SearchResult
 
 
-def _make_embedding_response(vector: List[float]) -> MagicMock:
-    """Build a mock OpenAI embeddings.create response object."""
-    response = MagicMock()
-    data_item = MagicMock()
-    data_item.embedding = vector
-    response.data = [data_item]
-    return response
+# --- Fixtures ---
 
 
 @pytest.fixture
@@ -26,8 +20,8 @@ def mock_settings():
     """Mock application settings."""
     with patch("src.services.vector_store.get_settings") as mock:
         settings = MagicMock()
-        settings.openai_api_key = "test-api-key"
-        settings.openai_embedding_model = "text-embedding-3-small"
+        settings.gemini_api_key = "test-gemini-key"
+        settings.gemini_embedding_model = "gemini-embedding-001"
         settings.chromadb_collection_name = "test_collection"
         settings.chromadb_persist_directory = "/tmp/test_chroma"
         mock.return_value = settings
@@ -35,16 +29,12 @@ def mock_settings():
 
 
 @pytest.fixture
-def mock_openai():
-    """Mock OpenAI client for embeddings."""
-    with patch("src.services.vector_store.OpenAI") as mock_cls:
-        mock_client_instance = MagicMock()
-        mock_client_instance.embeddings = MagicMock()
-        mock_client_instance.embeddings.create = MagicMock(
-            return_value=_make_embedding_response([0.1] * 1536)
-        )
-        mock_cls.return_value = mock_client_instance
-        yield mock_cls, mock_client_instance
+def mock_genai():
+    """Mock google.generativeai for embeddings."""
+    with patch("src.services.vector_store.genai") as mock:
+        # Mock embed_content to return a 3072-dim vector
+        mock.embed_content.return_value = {"embedding": [0.1] * 3072}
+        yield mock
 
 
 @pytest.fixture
@@ -62,7 +52,7 @@ def mock_chromadb():
 
 
 @pytest.fixture
-def vector_store(mock_settings, mock_openai, mock_chromadb):
+def vector_store(mock_settings, mock_genai, mock_chromadb):
     """Create VectorStoreService instance with mocks."""
     from src.services.vector_store import VectorStoreService
 
@@ -80,19 +70,26 @@ def sample_metadata():
         category=EmailCategory.PERSONAL,
         provider_message_id="msg-abc-123",
         thread_id="thread-1",
+        user_id="user-001",
     )
+
+
+# --- Tests for store_embedding ---
 
 
 class TestStoreEmbedding:
     """Tests for store_embedding method."""
 
-    def test_store_embedding_returns_record_id(
-        self, vector_store, mock_openai, mock_chromadb, sample_metadata
+    @pytest.mark.asyncio
+    async def test_store_embedding_returns_record_id(
+        self, vector_store, mock_genai, mock_chromadb, sample_metadata
     ):
         """store_embedding should return a record ID."""
         _, _, mock_collection = mock_chromadb
+        # No duplicate exists
+        mock_collection.get.return_value = {"ids": [], "metadatas": []}
 
-        result = vector_store.store_embedding(
+        result = await vector_store.store_embedding(
             email_id="email-123",
             text="Hello, this is a test email.",
             metadata=sample_metadata,
@@ -100,30 +97,34 @@ class TestStoreEmbedding:
 
         assert result == "emb_email-123"
 
-    def test_store_embedding_calls_openai_embed(
-        self, vector_store, mock_openai, mock_chromadb, sample_metadata
+    @pytest.mark.asyncio
+    async def test_store_embedding_calls_gemini_embed_content(
+        self, vector_store, mock_genai, mock_chromadb, sample_metadata
     ):
-        """store_embedding should call OpenAI embeddings.create."""
-        _, mock_client = mock_openai
+        """store_embedding should call genai.embed_content with the correct model."""
+        _, _, mock_collection = mock_chromadb
+        mock_collection.get.return_value = {"ids": [], "metadatas": []}
 
-        vector_store.store_embedding(
+        await vector_store.store_embedding(
             email_id="email-123",
             text="Hello, this is a test email.",
             metadata=sample_metadata,
         )
 
-        mock_client.embeddings.create.assert_called_once_with(
-            model="text-embedding-3-small",
-            input="Hello, this is a test email.",
+        mock_genai.embed_content.assert_called_once_with(
+            model="models/gemini-embedding-001",
+            content="Hello, this is a test email.",
         )
 
-    def test_store_embedding_upserts_to_collection(
-        self, vector_store, mock_openai, mock_chromadb, sample_metadata
+    @pytest.mark.asyncio
+    async def test_store_embedding_upserts_to_collection(
+        self, vector_store, mock_genai, mock_chromadb, sample_metadata
     ):
         """store_embedding should upsert the embedding with metadata to ChromaDB."""
         _, _, mock_collection = mock_chromadb
+        mock_collection.get.return_value = {"ids": [], "metadatas": []}
 
-        vector_store.store_embedding(
+        await vector_store.store_embedding(
             email_id="email-123",
             text="Test email body",
             metadata=sample_metadata,
@@ -132,19 +133,22 @@ class TestStoreEmbedding:
         mock_collection.upsert.assert_called_once()
         call_kwargs = mock_collection.upsert.call_args[1]
         assert call_kwargs["ids"] == ["emb_email-123"]
-        assert call_kwargs["embeddings"] == [[0.1] * 1536]
+        assert call_kwargs["embeddings"] == [[0.1] * 3072]
         assert call_kwargs["documents"] == ["Test email body"]
         assert call_kwargs["metadatas"][0]["email_id"] == "email-123"
         assert call_kwargs["metadatas"][0]["sender"] == "sender@example.com"
         assert call_kwargs["metadatas"][0]["category"] == "Personal"
         assert call_kwargs["metadatas"][0]["provider_message_id"] == "msg-abc-123"
         assert call_kwargs["metadatas"][0]["thread_id"] == "thread-1"
+        assert call_kwargs["metadatas"][0]["user_id"] == "user-001"
 
-    def test_store_embedding_without_thread_id(
-        self, vector_store, mock_openai, mock_chromadb
+    @pytest.mark.asyncio
+    async def test_store_embedding_without_thread_id(
+        self, vector_store, mock_genai, mock_chromadb
     ):
         """store_embedding should not include thread_id when it's None."""
         _, _, mock_collection = mock_chromadb
+        mock_collection.get.return_value = {"ids": [], "metadatas": []}
         metadata = EmailMetadata(
             email_id="email-456",
             sender="test@example.com",
@@ -152,9 +156,10 @@ class TestStoreEmbedding:
             category=EmailCategory.URGENT,
             provider_message_id="msg-456",
             thread_id=None,
+            user_id="user-002",
         )
 
-        vector_store.store_embedding(
+        await vector_store.store_embedding(
             email_id="email-456",
             text="Urgent email",
             metadata=metadata,
@@ -162,13 +167,43 @@ class TestStoreEmbedding:
 
         call_kwargs = mock_collection.upsert.call_args[1]
         assert "thread_id" not in call_kwargs["metadatas"][0]
+        assert call_kwargs["metadatas"][0]["user_id"] == "user-002"
+
+    @pytest.mark.asyncio
+    async def test_store_embedding_skips_duplicate(
+        self, vector_store, mock_genai, mock_chromadb, sample_metadata
+    ):
+        """store_embedding should skip insertion for duplicate provider_message_id."""
+        _, _, mock_collection = mock_chromadb
+        # Simulate duplicate found
+        mock_collection.get.return_value = {
+            "ids": ["emb_existing-id"],
+            "metadatas": [{"provider_message_id": "msg-abc-123"}],
+        }
+
+        result = await vector_store.store_embedding(
+            email_id="email-123",
+            text="Duplicate email",
+            metadata=sample_metadata,
+        )
+
+        # Should return existing ID, not create a new one
+        assert result == "emb_existing-id"
+        # Should NOT call embed_content for duplicates
+        mock_genai.embed_content.assert_not_called()
+        # Should NOT upsert for duplicates
+        mock_collection.upsert.assert_not_called()
+
+
+# --- Tests for search_similar ---
 
 
 class TestSearchSimilar:
     """Tests for search_similar method."""
 
-    def test_search_similar_returns_results(
-        self, vector_store, mock_openai, mock_chromadb
+    @pytest.mark.asyncio
+    async def test_search_similar_returns_results(
+        self, vector_store, mock_genai, mock_chromadb
     ):
         """search_similar should return a list of SearchResult."""
         _, _, mock_collection = mock_chromadb
@@ -194,7 +229,7 @@ class TestSearchSimilar:
             "distances": [[0.1, 0.3]],
         }
 
-        results = vector_store.search_similar("test query", k=5)
+        results = await vector_store.search_similar("test query", k=5)
 
         assert len(results) == 2
         assert isinstance(results[0], SearchResult)
@@ -203,11 +238,11 @@ class TestSearchSimilar:
         assert results[1].similarity_score == pytest.approx(0.7)
         assert results[0].email_id == "email-1"
 
-    def test_search_similar_uses_query_embedding(
-        self, vector_store, mock_openai, mock_chromadb
+    @pytest.mark.asyncio
+    async def test_search_similar_uses_gemini_embedding(
+        self, vector_store, mock_genai, mock_chromadb
     ):
-        """search_similar should generate a query embedding via OpenAI."""
-        _, mock_client = mock_openai
+        """search_similar should generate a query embedding via Gemini."""
         _, _, mock_collection = mock_chromadb
         mock_collection.query.return_value = {
             "ids": [[]],
@@ -216,15 +251,34 @@ class TestSearchSimilar:
             "distances": [[]],
         }
 
-        vector_store.search_similar("test query")
+        await vector_store.search_similar("test query")
 
-        mock_client.embeddings.create.assert_called_once_with(
-            model="text-embedding-3-small",
-            input="test query",
+        mock_genai.embed_content.assert_called_once_with(
+            model="models/gemini-embedding-001",
+            content="test query",
         )
 
-    def test_search_similar_empty_results(
-        self, vector_store, mock_openai, mock_chromadb
+    @pytest.mark.asyncio
+    async def test_search_similar_passes_k_parameter(
+        self, vector_store, mock_genai, mock_chromadb
+    ):
+        """search_similar should pass k to ChromaDB as n_results."""
+        _, _, mock_collection = mock_chromadb
+        mock_collection.query.return_value = {
+            "ids": [[]],
+            "metadatas": [[]],
+            "documents": [[]],
+            "distances": [[]],
+        }
+
+        await vector_store.search_similar("test query", k=10)
+
+        call_kwargs = mock_collection.query.call_args[1]
+        assert call_kwargs["n_results"] == 10
+
+    @pytest.mark.asyncio
+    async def test_search_similar_empty_results(
+        self, vector_store, mock_genai, mock_chromadb
     ):
         """search_similar should return empty list when no results."""
         _, _, mock_collection = mock_chromadb
@@ -235,14 +289,15 @@ class TestSearchSimilar:
             "distances": [[]],
         }
 
-        results = vector_store.search_similar("nothing here")
+        results = await vector_store.search_similar("nothing here")
 
         assert results == []
 
-    def test_search_similar_with_sender_filter(
-        self, vector_store, mock_openai, mock_chromadb
+    @pytest.mark.asyncio
+    async def test_search_similar_with_sender_filter(
+        self, vector_store, mock_genai, mock_chromadb
     ):
-        """search_similar should pass sender filter to ChromaDB."""
+        """search_similar should pass sender filter to ChromaDB where clause."""
         _, _, mock_collection = mock_chromadb
         mock_collection.query.return_value = {
             "ids": [[]],
@@ -252,15 +307,16 @@ class TestSearchSimilar:
         }
 
         filters = MetadataFilter(sender="alice@example.com")
-        vector_store.search_similar("query", filters=filters)
+        await vector_store.search_similar("query", filters=filters)
 
         call_kwargs = mock_collection.query.call_args[1]
         assert call_kwargs["where"] == {"sender": {"$eq": "alice@example.com"}}
 
-    def test_search_similar_with_category_filter(
-        self, vector_store, mock_openai, mock_chromadb
+    @pytest.mark.asyncio
+    async def test_search_similar_with_category_filter(
+        self, vector_store, mock_genai, mock_chromadb
     ):
-        """search_similar should pass category filter to ChromaDB."""
+        """search_similar should pass category filter to ChromaDB where clause."""
         _, _, mock_collection = mock_chromadb
         mock_collection.query.return_value = {
             "ids": [[]],
@@ -270,13 +326,40 @@ class TestSearchSimilar:
         }
 
         filters = MetadataFilter(category=EmailCategory.URGENT)
-        vector_store.search_similar("query", filters=filters)
+        await vector_store.search_similar("query", filters=filters)
 
         call_kwargs = mock_collection.query.call_args[1]
         assert call_kwargs["where"] == {"category": {"$eq": "Urgent"}}
 
-    def test_search_similar_with_combined_filters(
-        self, vector_store, mock_openai, mock_chromadb
+    @pytest.mark.asyncio
+    async def test_search_similar_with_date_range_filter(
+        self, vector_store, mock_genai, mock_chromadb
+    ):
+        """search_similar should pass date range filters to ChromaDB."""
+        _, _, mock_collection = mock_chromadb
+        mock_collection.query.return_value = {
+            "ids": [[]],
+            "metadatas": [[]],
+            "documents": [[]],
+            "distances": [[]],
+        }
+
+        filters = MetadataFilter(
+            date_from=datetime(2024, 1, 1),
+            date_to=datetime(2024, 1, 31),
+        )
+        await vector_store.search_similar("query", filters=filters)
+
+        call_kwargs = mock_collection.query.call_args[1]
+        where = call_kwargs["where"]
+        assert "$and" in where
+        conditions = where["$and"]
+        assert {"timestamp": {"$gte": "2024-01-01T00:00:00"}} in conditions
+        assert {"timestamp": {"$lte": "2024-01-31T00:00:00"}} in conditions
+
+    @pytest.mark.asyncio
+    async def test_search_similar_with_combined_filters(
+        self, vector_store, mock_genai, mock_chromadb
     ):
         """search_similar should combine multiple filters with $and."""
         _, _, mock_collection = mock_chromadb
@@ -291,16 +374,54 @@ class TestSearchSimilar:
             sender="alice@example.com",
             category=EmailCategory.PERSONAL,
         )
-        vector_store.search_similar("query", filters=filters)
+        await vector_store.search_similar("query", filters=filters)
 
         call_kwargs = mock_collection.query.call_args[1]
         assert "$and" in call_kwargs["where"]
+
+    @pytest.mark.asyncio
+    async def test_search_similar_results_include_metadata(
+        self, vector_store, mock_genai, mock_chromadb
+    ):
+        """search_similar results should include email_id, metadata, and similarity_score."""
+        _, _, mock_collection = mock_chromadb
+        mock_collection.query.return_value = {
+            "ids": [["emb_email-1"]],
+            "metadatas": [[
+                {
+                    "email_id": "email-1",
+                    "sender": "alice@example.com",
+                    "timestamp": "2024-01-15T10:00:00",
+                    "category": "Personal",
+                    "provider_message_id": "msg-1",
+                    "user_id": "user-001",
+                },
+            ]],
+            "documents": [["Sample email text content for testing"]],
+            "distances": [[0.2]],
+        }
+
+        results = await vector_store.search_similar("test", k=1)
+
+        assert len(results) == 1
+        result = results[0]
+        assert result.email_id == "email-1"
+        assert result.similarity_score == pytest.approx(0.8)
+        assert result.metadata.sender == "alice@example.com"
+        assert result.metadata.category == EmailCategory.PERSONAL
+        assert result.metadata.provider_message_id == "msg-1"
+        assert result.metadata.user_id == "user-001"
+        assert result.text_snippet is not None
+
+
+# --- Tests for delete_by_user ---
 
 
 class TestDeleteByUser:
     """Tests for delete_by_user method."""
 
-    def test_delete_by_user_returns_count(
+    @pytest.mark.asyncio
+    async def test_delete_by_user_returns_count(
         self, vector_store, mock_chromadb
     ):
         """delete_by_user should return count of deleted records."""
@@ -310,14 +431,15 @@ class TestDeleteByUser:
             "metadatas": [{}, {}, {}],
         }
 
-        count = vector_store.delete_by_user("alice@example.com")
+        count = await vector_store.delete_by_user("user-001")
 
         assert count == 3
         mock_collection.delete.assert_called_once_with(
             ids=["emb_email-1", "emb_email-2", "emb_email-3"]
         )
 
-    def test_delete_by_user_no_records(
+    @pytest.mark.asyncio
+    async def test_delete_by_user_no_records(
         self, vector_store, mock_chromadb
     ):
         """delete_by_user should return 0 when no records found."""
@@ -327,10 +449,31 @@ class TestDeleteByUser:
             "metadatas": [],
         }
 
-        count = vector_store.delete_by_user("nobody@example.com")
+        count = await vector_store.delete_by_user("nonexistent-user")
 
         assert count == 0
         mock_collection.delete.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_delete_by_user_queries_by_user_id(
+        self, vector_store, mock_chromadb
+    ):
+        """delete_by_user should query ChromaDB with user_id filter."""
+        _, _, mock_collection = mock_chromadb
+        mock_collection.get.return_value = {
+            "ids": ["emb_email-1"],
+            "metadatas": [{}],
+        }
+
+        await vector_store.delete_by_user("user-xyz")
+
+        mock_collection.get.assert_called_with(
+            where={"user_id": "user-xyz"},
+            include=["metadatas"],
+        )
+
+
+# --- Tests for is_duplicate ---
 
 
 class TestIsDuplicate:
@@ -363,3 +506,61 @@ class TestIsDuplicate:
         result = vector_store.is_duplicate("msg-nonexistent")
 
         assert result is False
+
+    def test_is_duplicate_queries_by_provider_message_id(
+        self, vector_store, mock_chromadb
+    ):
+        """is_duplicate should query ChromaDB by provider_message_id."""
+        _, _, mock_collection = mock_chromadb
+        mock_collection.get.return_value = {
+            "ids": [],
+            "metadatas": [],
+        }
+
+        vector_store.is_duplicate("msg-test-123")
+
+        mock_collection.get.assert_called_with(
+            where={"provider_message_id": "msg-test-123"},
+            include=["metadatas"],
+        )
+
+
+# --- Tests for _build_where_filter ---
+
+
+class TestBuildWhereFilter:
+    """Tests for internal _build_where_filter method."""
+
+    def test_returns_none_for_no_filters(self, vector_store):
+        """Should return None when no filters specified."""
+        result = vector_store._build_where_filter(None)
+        assert result is None
+
+    def test_returns_none_for_empty_filter(self, vector_store):
+        """Should return None when filter has no fields set."""
+        filters = MetadataFilter()
+        result = vector_store._build_where_filter(filters)
+        assert result is None
+
+    def test_single_sender_filter(self, vector_store):
+        """Should return direct filter for single condition."""
+        filters = MetadataFilter(sender="test@example.com")
+        result = vector_store._build_where_filter(filters)
+        assert result == {"sender": {"$eq": "test@example.com"}}
+
+    def test_single_category_filter(self, vector_store):
+        """Should return direct filter for single category condition."""
+        filters = MetadataFilter(category=EmailCategory.SPAM)
+        result = vector_store._build_where_filter(filters)
+        assert result == {"category": {"$eq": "Spam"}}
+
+    def test_multiple_filters_use_and(self, vector_store):
+        """Should combine multiple filters using $and."""
+        filters = MetadataFilter(
+            sender="test@example.com",
+            category=EmailCategory.URGENT,
+            date_from=datetime(2024, 1, 1),
+        )
+        result = vector_store._build_where_filter(filters)
+        assert "$and" in result
+        assert len(result["$and"]) == 3

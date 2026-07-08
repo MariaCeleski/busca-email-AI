@@ -254,6 +254,41 @@ class TestGmailClientSendReply:
         assert result.provider_message_id == "sent-msg-999"
 
 
+    async def test_send_reply_sets_thread_headers(self, gmail_client: GmailClient):
+        """Test that send_reply sets In-Reply-To, References, and threadId for threading."""
+        reply = ApprovedReply(
+            email_id="msg-123",
+            to_address="recipient@example.com",
+            subject="Re: Thread Subject",
+            body="Threaded reply.",
+            thread_id="thread-789",
+            in_reply_to="<original@mail.gmail.com>",
+        )
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"id": "sent-thread-msg"}
+        mock_response.raise_for_status = MagicMock()
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("src.providers.gmail.httpx.AsyncClient", return_value=mock_client):
+            result = await gmail_client.send_reply(reply)
+
+        assert result.success is True
+        # Verify the POST was called with threadId in the body
+        call_args = mock_client.post.call_args
+        sent_body = call_args.kwargs.get("json") or call_args[1].get("json")
+        assert sent_body["threadId"] == "thread-789"
+        # Verify raw message contains threading headers
+        import base64
+        raw_decoded = base64.urlsafe_b64decode(sent_body["raw"]).decode("utf-8")
+        assert "In-Reply-To: <original@mail.gmail.com>" in raw_decoded
+        assert "References: <original@mail.gmail.com>" in raw_decoded
+
+
 class TestGmailClientRefreshToken:
     """Tests for GmailClient.refresh_token()."""
 

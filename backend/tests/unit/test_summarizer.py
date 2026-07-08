@@ -61,57 +61,57 @@ def _valid_summary_json(
     return json.dumps({"summary": summary, "action_items": action_items})
 
 
-def _make_openai_response(text: str) -> MagicMock:
-    """Build a mock OpenAI ChatCompletion response object."""
+def _make_gemini_response(text: str) -> MagicMock:
+    """Build a mock Gemini response object."""
     response = MagicMock()
-    message = MagicMock()
-    message.content = text
-    choice = MagicMock()
-    choice.message = message
-    response.choices = [choice]
+    response.text = text
     return response
 
 
 @pytest.fixture
-def mock_openai():
-    """Patch AsyncOpenAI to avoid real API calls."""
-    with patch("src.agents.summarizer.AsyncOpenAI") as mock_cls:
-        mock_client_instance = MagicMock()
-        mock_client_instance.chat = MagicMock()
-        mock_client_instance.chat.completions = MagicMock()
-        mock_client_instance.chat.completions.create = AsyncMock()
-        mock_cls.return_value = mock_client_instance
-        yield mock_cls, mock_client_instance
+def mock_gemini():
+    """Patch google.generativeai to avoid real API calls."""
+    with patch("src.agents.summarizer.genai") as mock_genai:
+        mock_model_instance = MagicMock()
+        mock_model_instance.generate_content_async = AsyncMock()
+        mock_genai.GenerativeModel.return_value = mock_model_instance
+        yield mock_genai, mock_model_instance
 
 
 class TestSummarizerAgentInit:
     """Tests for SummarizerAgent initialization."""
 
-    def test_init_with_defaults(self, mock_openai):
+    def test_init_with_defaults(self, mock_gemini):
         """Test agent initializes with default timeout of 8s."""
         agent = SummarizerAgent(api_key="test-key")
         assert agent._timeout == 8
 
-    def test_init_with_custom_timeout(self, mock_openai):
+    def test_init_with_custom_timeout(self, mock_gemini):
         """Test agent respects custom timeout."""
         agent = SummarizerAgent(api_key="test-key", timeout=5)
         assert agent._timeout == 5
+
+    def test_init_configures_gemini(self, mock_gemini):
+        """Test agent configures the Gemini SDK with the API key."""
+        mock_genai, _ = mock_gemini
+        SummarizerAgent(api_key="test-key-123")
+        mock_genai.configure.assert_called_with(api_key="test-key-123")
 
 
 class TestShouldSummarize:
     """Tests for the should_summarize method."""
 
-    def test_short_email_returns_false(self, mock_openai, short_email):
+    def test_short_email_returns_false(self, mock_gemini, short_email):
         """Test email under 200 words does not need summarization."""
         agent = SummarizerAgent(api_key="test-key")
         assert agent.should_summarize(short_email) is False
 
-    def test_long_email_returns_true(self, mock_openai, long_email):
+    def test_long_email_returns_true(self, mock_gemini, long_email):
         """Test email over 200 words needs summarization."""
         agent = SummarizerAgent(api_key="test-key")
         assert agent.should_summarize(long_email) is True
 
-    def test_exactly_200_words_returns_true(self, mock_openai):
+    def test_exactly_200_words_returns_true(self, mock_gemini):
         """Test email with exactly 200 words returns True."""
         body = " ".join(["hello"] * 200)
         email = RawEmail(
@@ -129,12 +129,12 @@ class TestShouldSummarize:
 class TestCountWords:
     """Tests for the _count_words helper."""
 
-    def test_count_words_normal(self, mock_openai):
+    def test_count_words_normal(self, mock_gemini):
         """Test word counting on normal text."""
         agent = SummarizerAgent(api_key="test-key")
         assert agent._count_words("hello world foo bar") == 4
 
-    def test_count_words_empty(self, mock_openai):
+    def test_count_words_empty(self, mock_gemini):
         """Test word counting on empty string."""
         agent = SummarizerAgent(api_key="test-key")
         assert agent._count_words("") == 0
@@ -143,7 +143,7 @@ class TestCountWords:
 class TestExtractFirstSentences:
     """Tests for the _extract_first_sentences helper."""
 
-    def test_extract_three_sentences(self, mock_openai):
+    def test_extract_three_sentences(self, mock_gemini):
         """Test extracting first 3 sentences."""
         agent = SummarizerAgent(api_key="test-key")
         text = "First sentence. Second sentence. Third sentence. Fourth sentence."
@@ -153,7 +153,7 @@ class TestExtractFirstSentences:
         assert "Third sentence." in result
         assert "Fourth" not in result
 
-    def test_extract_fewer_than_n(self, mock_openai):
+    def test_extract_fewer_than_n(self, mock_gemini):
         """Test extracting when fewer sentences exist than n."""
         agent = SummarizerAgent(api_key="test-key")
         text = "Only one sentence."
@@ -164,7 +164,7 @@ class TestExtractFirstSentences:
 class TestBuildSummaryPrompt:
     """Tests for prompt construction."""
 
-    def test_prompt_contains_email_info(self, mock_openai, long_email):
+    def test_prompt_contains_email_info(self, mock_gemini, long_email):
         """Test prompt includes email details."""
         agent = SummarizerAgent(api_key="test-key")
         prompt = agent.build_summary_prompt(long_email)
@@ -172,7 +172,7 @@ class TestBuildSummaryPrompt:
         assert "manager@example.com" in prompt
         assert "Project status update" in prompt
 
-    def test_prompt_mentions_constraints(self, mock_openai, long_email):
+    def test_prompt_mentions_constraints(self, mock_gemini, long_email):
         """Test prompt mentions 3 sentences and 10 action items limits."""
         agent = SummarizerAgent(api_key="test-key")
         prompt = agent.build_summary_prompt(long_email)
@@ -180,11 +180,20 @@ class TestBuildSummaryPrompt:
         assert "3 sentences" in prompt
         assert "10" in prompt
 
+    def test_prompt_requests_json_output(self, mock_gemini, long_email):
+        """Test prompt asks for JSON output with summary and action_items."""
+        agent = SummarizerAgent(api_key="test-key")
+        prompt = agent.build_summary_prompt(long_email)
+
+        assert "JSON" in prompt
+        assert '"summary"' in prompt
+        assert '"action_items"' in prompt
+
 
 class TestFallbackSummary:
     """Tests for fallback_summary method."""
 
-    def test_fallback_returns_first_sentences(self, mock_openai):
+    def test_fallback_returns_first_sentences(self, mock_gemini):
         """Test fallback returns first 3 sentences with is_fallback=True."""
         email = RawEmail(
             provider_message_id="msg-f",
@@ -204,12 +213,28 @@ class TestFallbackSummary:
         assert "Sentence four." not in result.summary
         assert result.action_items == []
 
+    def test_fallback_with_fewer_than_three_sentences(self, mock_gemini):
+        """Test fallback returns all sentences when fewer than 3 exist."""
+        email = RawEmail(
+            provider_message_id="msg-f2",
+            sender="a@b.com",
+            subject="Test",
+            body="Only one sentence here.",
+            timestamp=datetime(2024, 1, 1),
+            provider="gmail",
+        )
+        agent = SummarizerAgent(api_key="test-key")
+        result = agent.fallback_summary(email)
+
+        assert result.is_fallback is True
+        assert result.summary == "Only one sentence here."
+
 
 class TestSummarize:
     """Tests for the main summarize method."""
 
     @pytest.mark.asyncio
-    async def test_summarize_empty_body(self, mock_openai, empty_body_email):
+    async def test_summarize_empty_body(self, mock_gemini, empty_body_email):
         """Test email with no content returns no_content=True."""
         agent = SummarizerAgent(api_key="test-key")
         result = await agent.summarize(empty_body_email)
@@ -218,9 +243,9 @@ class TestSummarize:
         assert result.summary == ""
 
     @pytest.mark.asyncio
-    async def test_summarize_short_email_no_llm_call(self, mock_openai, short_email):
+    async def test_summarize_short_email_no_llm_call(self, mock_gemini, short_email):
         """Test short email returns body unmodified without LLM call."""
-        _, mock_client = mock_openai
+        _, mock_model = mock_gemini
         agent = SummarizerAgent(api_key="test-key")
         result = await agent.summarize(short_email)
 
@@ -228,14 +253,14 @@ class TestSummarize:
         assert result.action_items == []
         assert result.is_fallback is False
         # Ensure no LLM call was made
-        mock_client.chat.completions.create.assert_not_called()
+        mock_model.generate_content_async.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_summarize_long_email_success(self, mock_openai, long_email):
-        """Test long email gets summarized via OpenAI."""
-        _, mock_client = mock_openai
-        mock_client.chat.completions.create = AsyncMock(
-            return_value=_make_openai_response(
+    async def test_summarize_long_email_success(self, mock_gemini, long_email):
+        """Test long email gets summarized via Gemini."""
+        _, mock_model = mock_gemini
+        mock_model.generate_content_async = AsyncMock(
+            return_value=_make_gemini_response(
                 _valid_summary_json(
                     summary="Project update looks good.",
                     action_items=["Review docs"],
@@ -251,15 +276,15 @@ class TestSummarize:
         assert result.is_fallback is False
 
     @pytest.mark.asyncio
-    async def test_summarize_timeout_returns_fallback(self, mock_openai, long_email):
+    async def test_summarize_timeout_returns_fallback(self, mock_gemini, long_email):
         """Test timeout returns fallback summary."""
-        _, mock_client = mock_openai
+        _, mock_model = mock_gemini
 
         async def slow_response(*args, **kwargs):
             await asyncio.sleep(20)
-            return _make_openai_response(_valid_summary_json())
+            return _make_gemini_response(_valid_summary_json())
 
-        mock_client.chat.completions.create = slow_response
+        mock_model.generate_content_async = slow_response
 
         agent = SummarizerAgent(api_key="test-key", timeout=1)
         result = await agent.summarize(long_email)
@@ -268,10 +293,10 @@ class TestSummarize:
         assert result.summary != ""
 
     @pytest.mark.asyncio
-    async def test_summarize_api_error_returns_fallback(self, mock_openai, long_email):
+    async def test_summarize_api_error_returns_fallback(self, mock_gemini, long_email):
         """Test API error returns fallback summary."""
-        _, mock_client = mock_openai
-        mock_client.chat.completions.create = AsyncMock(
+        _, mock_model = mock_gemini
+        mock_model.generate_content_async = AsyncMock(
             side_effect=RuntimeError("API down")
         )
 
@@ -281,14 +306,75 @@ class TestSummarize:
         assert result.is_fallback is True
 
     @pytest.mark.asyncio
-    async def test_summarize_invalid_json_returns_fallback(self, mock_openai, long_email):
+    async def test_summarize_invalid_json_returns_fallback(self, mock_gemini, long_email):
         """Test invalid JSON from LLM returns fallback."""
-        _, mock_client = mock_openai
-        mock_client.chat.completions.create = AsyncMock(
-            return_value=_make_openai_response("not valid json at all")
+        _, mock_model = mock_gemini
+        mock_model.generate_content_async = AsyncMock(
+            return_value=_make_gemini_response("not valid json at all")
         )
 
         agent = SummarizerAgent(api_key="test-key")
         result = await agent.summarize(long_email)
 
         assert result.is_fallback is True
+
+    @pytest.mark.asyncio
+    async def test_summarize_empty_string_body(self, mock_gemini):
+        """Test email with completely empty body returns no_content."""
+        email = RawEmail(
+            provider_message_id="msg-empty",
+            sender="a@b.com",
+            subject="Test",
+            body="",
+            timestamp=datetime(2024, 1, 1),
+            provider="gmail",
+        )
+        agent = SummarizerAgent(api_key="test-key")
+        result = await agent.summarize(email)
+
+        assert result.no_content is True
+        assert result.summary == ""
+
+    @pytest.mark.asyncio
+    async def test_summarize_gemini_empty_response_returns_fallback(self, mock_gemini, long_email):
+        """Test empty Gemini response (None text) returns fallback."""
+        _, mock_model = mock_gemini
+        response = MagicMock()
+        response.text = None
+        mock_model.generate_content_async = AsyncMock(return_value=response)
+
+        agent = SummarizerAgent(api_key="test-key")
+        result = await agent.summarize(long_email)
+
+        assert result.is_fallback is True
+
+    @pytest.mark.asyncio
+    async def test_summarize_action_items_capped_at_10(self, mock_gemini, long_email):
+        """Test action items are capped at 10 even if LLM returns more."""
+        _, mock_model = mock_gemini
+        too_many_items = [f"Item {i}" for i in range(15)]
+        mock_model.generate_content_async = AsyncMock(
+            return_value=_make_gemini_response(
+                json.dumps({"summary": "A summary.", "action_items": too_many_items})
+            )
+        )
+
+        agent = SummarizerAgent(api_key="test-key")
+        result = await agent.summarize(long_email)
+
+        assert len(result.action_items) == 10
+
+    @pytest.mark.asyncio
+    async def test_summarize_json_with_code_fences(self, mock_gemini, long_email):
+        """Test parsing JSON wrapped in markdown code fences."""
+        _, mock_model = mock_gemini
+        wrapped = "```json\n" + _valid_summary_json("Wrapped summary.") + "\n```"
+        mock_model.generate_content_async = AsyncMock(
+            return_value=_make_gemini_response(wrapped)
+        )
+
+        agent = SummarizerAgent(api_key="test-key")
+        result = await agent.summarize(long_email)
+
+        assert result.summary == "Wrapped summary."
+        assert result.is_fallback is False
