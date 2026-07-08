@@ -1,21 +1,36 @@
-# Histórico de Prompts do Projeto
+# Histórico de Prompts — AI Email Agent System
 
-Este documento registra, em ordem cronológica, todos os prompts e solicitações feitos pelo usuário durante o desenvolvimento do projeto **AI Email Agent System** (posteriormente renomeado como referência para o novo projeto **busca_email_AI**).
-
----
-
-## 1. Criação do Prompt Inicial do Agente
-
-**Prompt:**
-> Criar um prompt para agente de ia com base nesses parâmetros: Stack Tecnológica Recomendada... Linguagem: Python... Orquestração de Agentes: LangGraph... CrewAI... Backend: FastAPI... LLMs: Gemini... Integração: Gmail API ou Microsoft Graph API... Arquitetura do Sistema: Monitoramento (Trigger)... Agente Classificador... Agente Resumidor... Agente de Resposta... Human-in-the-loop (Interface)...
-
-**Resultado:** Definição da stack tecnológica base do projeto (Python, LangGraph, FastAPI, Gemini, Gmail/Outlook, React dashboard).
+> Registro cronológico de todos os prompts e solicitações feitos durante o desenvolvimento do projeto **AI Email Agent System**.
 
 ---
 
-## 2. Início do Fluxo de Spec (Kiro Workflow)
+## Índice
 
-**Prompt:** (implícito, via seleção de opções)
+1. [Fase 1 — Planejamento e Spec](#fase-1--planejamento-e-spec)
+2. [Fase 2 — Implementação Core (Backend)](#fase-2--implementação-core-backend)
+3. [Fase 3 — Infraestrutura e Configuração](#fase-3--infraestrutura-e-configuração)
+4. [Fase 4 — MCP (Model Context Protocol)](#fase-4--mcp-model-context-protocol)
+5. [Fase 5 — Migração e Ajustes de LLM](#fase-5--migração-e-ajustes-de-llm)
+6. [Fase 6 — Documentação e Critérios Acadêmicos](#fase-6--documentação-e-critérios-acadêmicos)
+7. [Fase 7 — Execução Completa das Tasks (Run All)](#fase-7--execução-completa-das-tasks-run-all)
+8. [Resumo Estatístico](#resumo-estatístico)
+9. [Artefatos Gerados](#artefatos-gerados)
+
+---
+
+## Fase 1 — Planejamento e Spec
+
+### Prompt 1: Criação do Prompt Inicial do Agente
+
+> Criar um prompt para agente de IA com base nesses parâmetros: Stack Tecnológica Recomendada... Linguagem: Python... Orquestração de Agentes: LangGraph... Backend: FastAPI... LLMs: Gemini... Integração: Gmail API ou Microsoft Graph API...
+
+**Resultado:** Definição da stack tecnológica base (Python, LangGraph, FastAPI, Gemini, Gmail/Outlook, React dashboard).
+
+---
+
+### Prompt 2: Início do Fluxo de Spec (Kiro Workflow)
+
+**Ações no Kiro:**
 - Seleção: "Build a Feature"
 - Seleção: "Requirements" (Requirements-First workflow)
 - Nome da feature: `ai-email-agent-system`
@@ -24,371 +39,311 @@ Este documento registra, em ordem cronológica, todos os prompts e solicitaçõe
 
 ---
 
-## 3. Criação do Design Técnico
+### Prompt 3: Criação do Design Técnico
 
-**Prompt:**
 > Create the design for ai-email-agent-system
 
-**Resultado:** Criação de `design.md` com arquitetura completa, diagramas Mermaid, modelos de dados, 24 propriedades de corretude, estratégia de testes.
+**Resultado:** Criação de `design.md` com arquitetura completa, diagramas Mermaid, modelos de dados, 24 propriedades de corretude.
 
 ---
 
-## 4. Criação da Lista de Tarefas
+### Prompt 4: Criação da Lista de Tarefas
 
-**Prompt:**
 > Create the tasks for ai-email-agent-system
 
-**Resultado:** Criação de `tasks.md` com 19 grupos de tarefas, 38 sub-tarefas, grafo de dependências.
+**Resultado:** Criação de `tasks.md` com 19 grupos de tarefas, 61 sub-tarefas, grafo de dependências em waves.
 
 ---
 
-## 5. Início da Execução de Tarefas
+## Fase 2 — Implementação Core (Backend)
 
-**Prompt:**
-> na sua opinião podemos continuar por onde?
+### Prompt 5: Início da Execução
 
-**Resultado:** Recomendação de iniciar pela Task 1.1 (setup do projeto).
+> Na sua opinião podemos continuar por onde?
+
+**Resultado:** Recomendação de iniciar pela Task 1.1 (setup do projeto Python).
 
 ---
 
-## 6. Confirmação e Execução Contínua
+### Prompt 6: Confirmação e Execução Task 1.1
 
-**Prompt:**
 > sim
 
-**Resultado:** Execução da Task 1.1 (estrutura do projeto Python, pyproject.toml, config.py).
+**Resultado:** Criação da estrutura do projeto (pyproject.toml, pacotes, config.py, conftest.py).
 
 ---
 
-## 7. Continuação de Tarefas 1.2 e 1.3
+### Prompt 7: Tasks 1.2 e 1.3
 
-**Prompt:**
 > sim
 
-**Resultado:** Confirmação/conclusão dos modelos Pydantic e schema PostgreSQL.
+**Resultado:** Modelos Pydantic (enums + validadores) e schema PostgreSQL (ORM + migrations + repositories).
 
 ---
 
-## 8. Reorganização da Arquitetura em Monorepo
+### Prompt 8: Reorganização em Monorepo
 
-**Prompt:**
-> separe em pastas o frontend, backend, dados e etc. deixe a arquitetura toda organizada
+> Separe em pastas o frontend, backend, dados e etc. Deixe a arquitetura toda organizada.
 
-**Resultado:** Reestruturação completa do projeto em `backend/`, `frontend/`, `data/`, `docs/` com scaffolds de React + Vite + TypeScript para o frontend.
-
----
-
-## 9. Automação de Atualização do README
-
-**Prompt:**
-> atualizar o readme sempre que houver modificações e implementações, após continue com as próximas tasks (segurança, provedores de email, etc.)
-
-**Resultado:** Criação de hook `postTaskExecution` para atualizar README automaticamente. Implementação de:
-- Segurança (AES-256-GCM encryption, access logger)
-- OAuth Manager
-- Gmail Client
-- Microsoft Graph Client
+**Resultado:** Reestruturação em `backend/`, `frontend/`, `data/`, `docs/` com React + Vite + TypeScript no frontend.
 
 ---
 
-## 10. Continuação — Agentes Core
+### Prompt 9: Automação de README + Próximas Tasks
 
-**Prompt:**
+> Atualizar o README sempre que houver modificações e implementações, após continue com as próximas tasks (segurança, provedores de email, etc.)
+
+**Resultado:**
+- Hook `postTaskExecution` criado para atualizar README automaticamente
+- Implementação: AES-256-GCM encryption, access logger, OAuth Manager, Gmail Client, Microsoft Graph Client
+
+---
+
+### Prompt 10: Continuação — Agentes Core
+
 > sim
 
-**Resultado:** Implementação de:
-- Email Monitor (polling, webhook, dedup)
-- Classifier Agent
-- Summarizer Agent
-- Vector Store Service (ChromaDB)
-- Response Agent
+**Resultado:** Email Monitor, Classifier Agent, Summarizer Agent, Vector Store (ChromaDB), Response Agent.
 
 ---
 
-## 11. Documentação da Estrutura Final
+### Prompt 11: Documentação da Estrutura Final
 
-**Prompt:**
-> crie um arquivo .md e documente a estrutura final caso ainda não exista, se já existe, me fale qual é o arquivo
+> Crie um arquivo .md e documente a estrutura final, caso ainda não exista.
 
-**Resultado:** Atualização de `docs/architecture.md` com árvore de diretórios completa, tech stack, diagramas de pipeline, endpoints da API.
+**Resultado:** Atualização de `docs/architecture.md` com árvore de diretórios, tech stack, diagramas de pipeline, endpoints.
 
 ---
 
-## 12. Continuação — Orchestrator, API, Frontend
+### Prompt 12: Orchestrator, API, Frontend
 
-**Prompt:**
 > sim
 
-**Resultado:** Implementação de:
-- Agent Orchestrator (LangGraph StateGraph)
-- Celery tasks (background jobs)
-- FastAPI endpoints completos
-- React Dashboard completo (páginas, componentes, hooks)
+**Resultado:** Agent Orchestrator (LangGraph), Celery tasks, FastAPI endpoints, React Dashboard completo.
 
 ---
 
-## 13. Diagnóstico de Problema no Backend
+## Fase 3 — Infraestrutura e Configuração
 
-**Prompt:**
-> o backend não está funcionando, analise o que pode estar acontecendo
+### Prompt 13: Diagnóstico de Problema no Backend
 
-**Resultado:** Identificação de que as migrations do Alembic não tinham sido executadas (`relation "processed_emails" does not exist`). Correção via `alembic upgrade head`.
+> O backend não está funcionando, analise o que pode estar acontecendo.
 
----
-
-## 14. Dúvida sobre Comando Alembic
-
-**Prompt:**
-> como executa o alembic upgrade head
-
-**Resultado:** Explicação passo a passo do comando, pré-requisitos e o que ele faz.
+**Resultado:** Identificação de migrations não executadas (`relation "processed_emails" does not exist`). Fix: `alembic upgrade head`.
 
 ---
 
-## 15. Configuração para Visualização no Dashboard
+### Prompt 14: Dúvida sobre Alembic
 
-**Prompt:**
-> onde vai buscar os dados, precisa configurar api e outras configurações que precisam ser feitas, o que mais precisa pra ser visualizado no dashboard?
+> Como executa o alembic upgrade head?
 
-**Resultado:** Checklist completo de configuração: GEMINI_API_KEY, credenciais OAuth Gmail/Outlook, API_KEY, ENCRYPTION_KEY, arquivos .env do backend e frontend.
-
----
-
-## 16. Pergunta sobre Uso de MCP
-
-**Prompt:**
-> o projeto foi desenvolvido com algum mcp?
-
-**Resultado:** Esclarecimento de que o projeto não usava MCP até então — todas as integrações eram via REST/SDK diretos.
+**Resultado:** Explicação passo a passo do comando, pré-requisitos e efeitos.
 
 ---
 
-## 17. Quais MCPs Podem ser Configurados
+### Prompt 15: Configuração para Visualização no Dashboard
 
-**Prompt:**
-> quais mcp podemos configurar?
+> Onde vai buscar os dados? Precisa configurar API e outras configurações? O que mais precisa pra ser visualizado no dashboard?
 
-**Resultado:** Lista de MCPs relevantes (PostgreSQL, Filesystem, Memory, AWS Docs, GitHub, Puppeteer, Sequential Thinking) com recomendação de PostgreSQL MCP.
-
----
-
-## 18. Configuração dos MCPs de Desenvolvimento
-
-**Prompt:**
-> configure
-
-**Resultado:** Criação de `.kiro/settings/mcp.json` com servers PostgreSQL, Memory e Filesystem (todos oficiais do repositório `modelcontextprotocol/servers`).
+**Resultado:** Checklist completo: GEMINI_API_KEY, credenciais OAuth, API_KEY, ENCRYPTION_KEY, .env backend/frontend.
 
 ---
 
-## 19. Questionamento sobre Segurança dos MCPs
+### Prompt 16: Configurações OAuth no .env
 
-**Prompt:**
-> esses mcps devem ser seguros
+> Arquivo .env foi criado, agora adicione as configurações obrigatórias do item 3.
 
-**Resultado:** Explicação de que os 3 MCPs são pacotes oficiais, rodam localmente, sem tráfego externo, com aprovação supervisionada no Kiro.
-
----
-
-## 20. Reforço da Regra de Ouro de Segurança MCP
-
-**Prompt:**
-> Regra de ouro: Nunca conecte a um servidor MCP de origem desconhecida sem revisar o código. Trate servidores de terceiros como dependências — auditadas antes de instalar.
-
-**Resultado:** Confirmação de que os MCPs configurados atendem a essa regra (código aberto, mantidos pela Anthropic).
+**Resultado:** Orientação sobre variáveis OAuth (GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET) que devem ser adicionadas manualmente.
 
 ---
 
-## 21. Exemplo de Múltiplos Servidores MCP
+### Prompt 17: Documentação de Endereços de APIs
 
-**Prompt:**
-> MÚLTIPLOS SERVIDORES SIMULTÂNEOS Agregando vários servidores num só cliente client = MultiServerMCPClient({"agenda": {...}, "gmail_mock": {...}}) tools = await client.get_tools()
+> Crie uma documentação com endereços das APIs para configurar o ambiente .env.
 
-**Resultado:** Reconhecimento do padrão apresentado (sem implementação ainda).
+**Resultado:** Criação de `docs/api-keys-guide.md` com URLs: Gemini AI Studio, Google Cloud Console, Azure Portal.
 
 ---
 
-## 22. Solicitação de Implementação do Padrão MultiServerMCPClient
+### Prompt 18: Docker e DBeaver
 
-**Prompt:**
-> esse é um exemplo para usarmos no projeto
+> Vamos usar DBeaver e Docker.
 
-**Resultado:** Implementação completa de:
-- `src/mcp/client.py` — `MultiServerMCPClient` (JSON-RPC over stdio)
-- `src/mcp/servers/gmail_server.py`
-- `src/mcp/servers/agenda_server.py`
-- `src/mcp/servers/vector_search_server.py`
+**Resultado:** `docker-compose.yml` completo (PostgreSQL, Redis, ChromaDB), instruções de conexão DBeaver.
+
+---
+
+## Fase 4 — MCP (Model Context Protocol)
+
+### Prompt 19: Pergunta sobre Uso de MCP
+
+> O projeto foi desenvolvido com algum MCP?
+
+**Resultado:** Esclarecimento de que o projeto usava REST/SDK diretos, sem MCP.
+
+---
+
+### Prompt 20: Quais MCPs Podem ser Configurados
+
+> Quais MCP podemos configurar?
+
+**Resultado:** Lista: PostgreSQL, Filesystem, Memory, AWS Docs, GitHub, Puppeteer, Sequential Thinking.
+
+---
+
+### Prompt 21: Configuração dos MCPs
+
+> Configure.
+
+**Resultado:** `.kiro/settings/mcp.json` com PostgreSQL, Memory e Filesystem servers.
+
+---
+
+### Prompt 22: Segurança dos MCPs
+
+> Esses MCPs devem ser seguros.
+
+**Resultado:** Confirmação — pacotes oficiais, execução local, sem tráfego externo.
+
+---
+
+### Prompt 23: Regra de Ouro de Segurança
+
+> Regra de ouro: Nunca conecte a um servidor MCP de origem desconhecida sem revisar o código.
+
+**Resultado:** Validação de que os MCPs configurados atendem à regra (código aberto, mantidos pela Anthropic).
+
+---
+
+### Prompt 24: Padrão MultiServerMCPClient
+
+> MÚLTIPLOS SERVIDORES SIMULTÂNEOS — Agregando vários servidores num só cliente.
+
+**Resultado:** Reconhecimento do padrão apresentado.
+
+---
+
+### Prompt 25: Implementação do MultiServerMCPClient
+
+> Esse é um exemplo para usarmos no projeto.
+
+**Resultado:**
+- `src/mcp/client.py` — MultiServerMCPClient (JSON-RPC over stdio)
+- `src/mcp/servers/gmail_server.py`, `agenda_server.py`, `vector_search_server.py`
 - `src/mcp/integration.py`
-- 23 testes unitários (todos passando)
+- 23 testes unitários
 
 ---
 
-## 23. Dúvida sobre Configurações Após Mudanças de MCP
+### Prompt 26: Configurações Após Mudanças de MCP
 
-**Prompt:**
-> mediante essas mudanças, quais configurações devo fazer?
+> Mediante essas mudanças, quais configurações devo fazer?
 
-**Resultado:** Checklist completo passo a passo: chaves locais, GEMINI_API_KEY, OAuth Gmail, arquivos .env backend/frontend, migrations, inicialização dos serviços.
-
----
-
-## 24. Solicitação das 3 Opções em Detalhe
-
-**Prompt:**
-> as tres opções, passo a passo
-
-**Resultado:** Criação de `docs/setup-guide.md` com guia completo: geração de chaves locais, obtenção de GEMINI_API_KEY, configuração completa de OAuth do Gmail (Google Cloud Console), montagem dos arquivos .env, subida dos serviços, conexão da conta Gmail, troubleshooting.
+**Resultado:** Checklist completo de configuração pós-MCP.
 
 ---
 
-## 25. Pergunta sobre Existência do Arquivo .env
+## Fase 5 — Migração e Ajustes de LLM
 
-**Prompt:**
-> o projeto tem um arquivo .env?
+### Prompt 27: Adição de Chave OpenAI
 
-**Resultado:** Esclarecimento de que existe `.env.example` (template) mas não `.env` real (por segurança, está no `.gitignore`). Instrução de como copiar.
+> Crie dentro do arquivo .env um acesso para add uma chave da OpenAI.
 
----
-
-## 26. Solicitação de Adicionar Configurações OAuth
-
-**Prompt:**
-> arquivo .env foi criado, agora adicione as configurações obrigatórias do item 3
-
-**Resultado:** Explicação de que não é possível editar arquivos com segredos reais diretamente; orientação de quais variáveis adicionar manualmente (GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET).
+**Resultado:** `OPENAI_API_KEY` e `OPENAI_MODEL` adicionados ao `.env`.
 
 ---
 
-## 27. Documentação de Endereços de APIs
+### Prompt 28: Migração dos Agentes para OpenAI
 
-**Prompt:**
-> crie uma documentação com endereços das apis para configurar o ambiente .env
+> Inicie a aplicação e rode com a chave da OpenAI.
 
-**Resultado:** Criação de `docs/api-keys-guide.md` com todas as URLs necessárias: Gemini AI Studio, Google Cloud Console, Azure Portal, documentação oficial de cada API.
-
----
-
-## 28. Pergunta sobre Migração para TypeScript
-
-**Prompt:**
-> responda a minha pergunta: seria possível transformar esse projeto em outra linguagem, por exemplo: Typescript. esse projeto deve seguir essas regras: Tool-Use e Arquitetura Avançada de Agentes... MCP e Criação de Agentes com LangGraph... Integrações Avançadas... Automação Prática...
-
-**Resultado:** Análise comparativa detalhada Python vs TypeScript para cada requisito (LangGraph, MCP, memória, ChromaDB, Celery, testes property-based). Recomendação de manter Python para o backend de agentes.
-
----
-
-## 29. Decisão de Criar Novo Projeto
-
-**Prompt:**
-> estou pensando, não vou migrar para typescript, vou iniciar um novo projeto
-
-**Resultado:** Confirmação e disponibilidade para ajudar quando a direção do novo projeto for decidida.
-
----
-
-## 30. Criação do Prompt Completo para Novo Projeto TypeScript
-
-**Prompt:**
-> crie um prompt com os requisitos que passei para iniciar um novo projeto com agentes de IA com o nome busca_email_AI em typescript, similar a esse, exclua tudo o que seja do python e suas dependências, use somente requisitos, referências e dependências para typescript, com react, vite no front, tailwind... O projeto deve rodar em Node.js com TypeScript Estrito, utilizando as bibliotecas @langchain/langgraph, @google/generative-ai... SOLICITAÇÃO DE CÓDIGO: 1. Gere o arquivo 'types.ts'... 2. Gere o arquivo 'graph.ts'... 3. Forneça o arquivo 'package.json'...
-
-**Resultado:** Criação de `docs/prompt-busca-email-ai.md` — prompt completo para o novo projeto TypeScript, incluindo:
-- Stack tecnológica completa (Node.js, LangGraph JS, Fastify, Prisma, BullMQ, Vitest)
-- Arquitetura de diretórios
-- Requisitos obrigatórios (ReAct, Planner-Executor, Toolformer, MCP, memória, governança)
-- Especificação dos arquivos `types.ts`, `graph.ts`, `package.json`
-- Regras de código e critérios de aceite
-
----
-
-## 31. Adição de Docker e DBeaver ao Prompt
-
-**Prompt:**
-> vamos usar dbeaver e docker
-
-**Resultado:** Atualização do `docs/prompt-busca-email-ai.md` com seção de infraestrutura: `docker-compose.yml` completo, instruções de conexão DBeaver, comandos úteis.
-
----
-
-## 32. Pergunta sobre Segurança da Combinação DBeaver + Docker
-
-**Prompt:**
-> uma pergunta, pode usar essas últimas sugestões de DB sem causar problemas no projeto?
-
-**Resultado:** Confirmação de que DBeaver + Docker não geram conflitos, com explicação técnica e único cuidado prático (conflito de porta com outro PostgreSQL local).
-
----
-
-## 33. Dúvida sobre Regra de Código (Async/Await)
-
-**Prompt:**
-> o que quer dizer: 7. Async/Await: todo I/O assíncrono, sem callbacks?
-
-**Resultado:** Explicação com exemplos de código (callback vs async/await) e justificativa da regra.
-
----
-
-## 34. Verificação de Aplicação de Segurança
-
-**Prompt:**
-> foi aplicado segurança?
-
-**Resultado:** Tabela detalhando todas as camadas de segurança já presentes no prompt do novo projeto (API auth, criptografia, validação, MCP security, governança, OAuth, logging, rate limiting). Sugestão de reforços adicionais (Helmet, CORS restritivo).
-
----
-
-## 35. Adição de Chave OpenAI ao .env
-
-**Prompt:**
-> crie dentro do arquivo .env um acesso para add uma chave da openAI
-
-**Resultado:** Adição de `OPENAI_API_KEY` e `OPENAI_MODEL` ao `backend/.env` (projeto Python existente).
-
----
-
-## 36. Migração dos Agentes para OpenAI
-
-**Prompt:**
-> inicie a aplicação e rode com a chave dp openai
-
-**Resultado:** Migração completa dos agentes de Gemini para OpenAI:
-- `ClassifierAgent`, `SummarizerAgent`, `ResponseAgent` migrados para `AsyncOpenAI`
-- `VectorStoreService` migrado para embeddings `text-embedding-3-small`
+**Resultado:**
+- ClassifierAgent, SummarizerAgent, ResponseAgent migrados para `AsyncOpenAI`
+- VectorStoreService migrado para `text-embedding-3-small`
 - Dependência `openai==1.58.1` adicionada
-- 4 arquivos de teste reescritos com mocks OpenAI
-- 221 testes passando
-- Correção de bug no `.env` (`OPENAI_MODEL` com valor inválido `gpt-5.4 mini` → corrigido para `gpt-4o-mini`)
-- Identificação de erro de quota (429 insufficient_quota) na conta OpenAI do usuário
+- Correção de bug no `.env` (`gpt-5.4 mini` → `gpt-4o-mini`)
+- Identificação de erro 429 (insufficient_quota)
 
 ---
 
-## 37. Pergunta sobre Configuração para Buscar E-mails
+### Prompt 29: Busca de E-mails
 
-**Prompt:**
-> o que mais precisamos configurar pra buscar os emails
+> O que mais precisamos configurar pra buscar os emails?
 
-**Resultado:** (ver resposta na conversa atual — configuração de OAuth Gmail/Microsoft e fluxo de conexão de conta)
-
----
-
-## 38. Solicitação Deste Documento
-
-**Prompt:**
-> antes de iniciarmos a implementação dessas 03 peças, crie um documentos .md de todos os prompts já usados desde o início nesse projeto
-
-**Resultado:** Este documento (`docs/historico-prompts.md`).
+**Resultado:** Explicação de OAuth Gmail/Microsoft e fluxo de conexão de conta.
 
 ---
 
-## 39. Critérios de Avaliação Acadêmica (17 critérios, via imagens)
+## Fase 6 — Documentação e Critérios Acadêmicos
 
-**Prompt:**
-> esse projeto deve seguir alguns critérios, tenho 3 imagens descrevendo os critérios exigidos de 01 a 17. Faça uma análise e descreva o que devemos seguir para que a avaliação tenha uma nota máximo.
+### Prompt 30: Guia Passo a Passo
 
-**Contexto identificado:** As imagens mostravam uma rubrica de avaliação de nota parcial ("Zero/Parcial/Máximo") referente a **outro projeto** (aparentemente um sistema de estacionamento/lava-rápido em Node.js + Express + Supabase — evidências: `parking.service.test.ts`, `wash-orders.service.test.ts`, `NewOrderForm.test.tsx`, portas 3333/5173). Não correspondia ao projeto de e-mail atual.
+> As três opções, passo a passo.
 
-**Decisão do usuário:** Aplicar os 17 critérios (adaptados) ao planejamento do novo projeto **busca_email_AI**, incorporando: vídeo demo, quadro Kanban no GitHub, GitFlow real, commits semânticos, README completo, arquitetura documentada com IA, ciclos de prompting documentados, padrões de prompting nomeados, refatoração documentada, suíte de testes com IA, documentação técnica automática, pipeline CI/CD, e análise crítica de saídas de IA.
+**Resultado:** Criação de `docs/setup-guide.md` — guia completo de configuração.
 
-**Resultado:** Ver seção "Critérios de Avaliação Acadêmica" no `docs/prompt-busca-email-ai.md` (a ser criada).
+---
+
+### Prompt 31: Solicitação Deste Documento
+
+> Crie um documento .md de todos os prompts já usados desde o início nesse projeto.
+
+**Resultado:** Criação de `docs/historico-prompts.md`.
+
+---
+
+### Prompt 32: Critérios de Avaliação Acadêmica (17 critérios)
+
+> Esse projeto deve seguir alguns critérios, tenho 3 imagens descrevendo os critérios exigidos de 01 a 17.
+
+**Contexto:** Rubrica acadêmica com 17 critérios (vídeo demo, Kanban, GitFlow, commits semânticos, documentação com IA, testes, CI/CD, etc.).
+
+**Resultado:** Incorporação dos critérios ao planejamento do projeto.
+
+---
+
+## Fase 7 — Execução Completa das Tasks (Run All)
+
+### Prompt 33: Continuação da Execução (Run All Tasks)
+
+> continue
+
+**Resultado:** Execução automatizada de **todas as 47 tasks obrigatórias** do spec em modo orquestrador, incluindo:
+
+| Wave | Tasks Executadas |
+|------|-----------------|
+| 1 | 1.2 Pydantic models, 1.3 PostgreSQL schema |
+| 2 | 2.1 AES-256 encryption, 2.2 Access logger |
+| 3 | 3.1 OAuth manager |
+| 4 | 3.2 Gmail client, 3.3 Microsoft Graph client |
+| 5 | 4 Checkpoint, 5.1 Email Monitor |
+| 6 | 5.2 Auth retry, 6.1 Classifier Agent (Gemini) |
+| 7 | 7.1 Summarizer Agent, 8.1 ChromaDB Vector Store |
+| 8 | 9.1 Response Agent |
+| 9 | 10 Checkpoint, 11.1 LangGraph StateGraph |
+| 10 | 11.2 Retry logic, 11.3 Result Publisher |
+| 11 | 12.1 Celery + Redis tasks |
+| 12 | 13 Checkpoint, 14.1 API auth middleware |
+| 13 | 14.2 Email endpoints, 14.3 Draft actions, 14.4 Fetch/WebSocket |
+| 14 | 15.1 Account connection/disconnection |
+| 15 | 16 Checkpoint, 17.1 React setup |
+| 16 | 17.2 Email list view, 17.3 Email detail, 17.4 Account UI |
+| 17 | 18.1 Pipeline end-to-end + Circuit Breaker |
+| 18 | 19 Final Checkpoint |
+
+**Status Final:**
+- ✅ 511 testes de backend passando
+- ✅ Frontend compilando sem erros (TypeScript + Vite build)
+- ✅ 47 de 47 tasks obrigatórias concluídas
+- ⏭️ 14 tasks opcionais (property tests) não executadas
+
+---
+
+### Prompt 34: Análise e Organização deste Documento
+
+> Analise e organize o arquivo historico-prompts.md
+
+**Resultado:** Reorganização completa do documento em fases temáticas, numeração sequencial corrigida, resumo estatístico atualizado.
 
 ---
 
@@ -397,26 +352,73 @@ Este documento registra, em ordem cronológica, todos os prompts e solicitaçõe
 | Categoria | Quantidade |
 |---|---|
 | Prompts de criação de spec (requirements/design/tasks) | 3 |
-| Prompts de execução de tarefas/implementação | 8 |
-| Prompts de configuração/troubleshooting | 12 |
-| Prompts sobre MCP | 6 |
-| Prompts sobre novo projeto TypeScript | 6 |
-| Prompts sobre migração OpenAI | 2 |
+| Prompts de execução de tarefas/implementação | 10 |
+| Prompts de configuração/troubleshooting | 6 |
+| Prompts sobre MCP | 8 |
+| Prompts sobre migração de LLM (OpenAI) | 3 |
 | Prompts de documentação | 4 |
 | Prompts sobre critérios de avaliação | 1 |
-| **Total de interações registradas** | **39** |
+| Prompts de infraestrutura (Docker/DBeaver) | 1 |
+| Prompts de reorganização de projeto | 1 |
+| Execução automatizada (Run All Tasks) | 1 |
+| **Total de interações registradas** | **34** |
+
+---
 
 ## Artefatos Gerados
 
+### Spec (Kiro)
 - `.kiro/specs/ai-email-agent-system/requirements.md`
 - `.kiro/specs/ai-email-agent-system/design.md`
 - `.kiro/specs/ai-email-agent-system/tasks.md`
-- `docs/architecture.md`
-- `docs/setup-guide.md`
-- `docs/api-keys-guide.md`
-- `docs/prompt-busca-email-ai.md`
-- `docs/historico-prompts.md` (este arquivo)
+- `.kiro/specs/ai-email-agent-system/.config.kiro`
+
+### Documentação
+- `docs/architecture.md` — Arquitetura técnica detalhada
+- `docs/setup-guide.md` — Guia de configuração passo a passo
+- `docs/api-keys-guide.md` — URLs e procedimentos para obter chaves de API
+- `docs/historico-prompts.md` — Este arquivo
+
+### Backend (Python/FastAPI)
+- **Modelos:** Pydantic (enums, email, classification, summary, draft, workflow, API)
+- **ORM:** SQLAlchemy + Alembic migrations (6 tabelas, índices)
+- **Segurança:** AES-256-GCM encryption, access logger, JWT auth middleware
+- **Provedores:** Gmail Client, Microsoft Graph Client, OAuth Manager
+- **Serviços:** Email Monitor, Vector Store (ChromaDB), Result Publisher, Circuit Breaker
+- **Agentes:** Classifier (Gemini), Summarizer (Gemini), Response (Gemini + semantic search)
+- **Orquestrador:** LangGraph StateGraph com routing condicional e dual path
+- **Background:** Celery + Redis (process_email_task, poll_emails_task)
+- **API:** FastAPI com 9 endpoints REST + 1 WebSocket
+- **MCP:** MultiServerMCPClient + 3 servidores internos
+- **Testes:** 511 testes (unit + integration + property)
+
+### Frontend (React/TypeScript/Vite)
+- **Páginas:** Dashboard, EmailDetail, ManualReview, Settings, Auth, OAuthCallback
+- **Componentes:** EmailList, FilterBar, Pagination, ReviewSection, DraftReplyEditor, ToastContainer, Layout, ProtectedRoute
+- **Serviços:** API client, WebSocket client
+- **Contextos:** AuthContext, NotificationContext
+- **Hooks:** useEmails, useWebSocket
+
+### Infraestrutura
+- `docker-compose.yml` (PostgreSQL, Redis, ChromaDB)
 - `.kiro/settings/mcp.json`
-- Backend completo (Python/FastAPI/LangGraph) com 221 testes
-- Frontend completo (React/TypeScript/Vite)
-- Módulo MCP (`src/mcp/`) com MultiServerMCPClient
+- `backend/.env.example`
+- `frontend/vite.config.ts`
+
+---
+
+## Padrões de Prompting Utilizados
+
+| Padrão | Exemplo | Frequência |
+|--------|---------|------------|
+| **Instrução Direta** | "Configure", "sim" | Alta |
+| **Pergunta Exploratória** | "Quais MCP podemos configurar?" | Média |
+| **Diagnóstico** | "O backend não está funcionando, analise..." | Baixa |
+| **Delegação com Contexto** | "Separe em pastas o frontend, backend..." | Média |
+| **Automação** | "Atualizar o README sempre que houver modificações..." | Baixa |
+| **Referência Visual** | Critérios via imagens (prompt 32) | Baixa |
+| **Continuação Implícita** | "continue", "sim" | Alta |
+
+---
+
+*Última atualização: Julho 2026*
