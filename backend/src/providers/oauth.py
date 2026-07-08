@@ -2,13 +2,17 @@
 
 Handles the complete OAuth flow: initiating authorization, exchanging codes
 for tokens, refreshing expired tokens, and revoking access.
+
+Token refresh failure handling:
+- When a token refresh fails, the connected account is marked as "disconnected"
+- The user is notified that re-authentication is required (Requirement 9.5)
 """
 
 from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Dict, Optional
+from typing import Callable, Dict, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -39,6 +43,21 @@ _OAUTH_CONFIGS: Dict[str, Dict[str, str]] = {
 }
 
 
+class TokenRefreshError(Exception):
+    """Raised when a token refresh operation fails.
+
+    The account has been marked as disconnected when this is raised.
+    """
+
+    def __init__(self, user_id: str, provider: str, reason: str):
+        self.user_id = user_id
+        self.provider = provider
+        self.reason = reason
+        super().__init__(
+            f"Token refresh failed for user={user_id} provider={provider}: {reason}"
+        )
+
+
 class OAuthManager:
     """Manages OAuth 2.0 flows for email provider connections.
 
@@ -52,6 +71,7 @@ class OAuthManager:
         self,
         session: AsyncSession,
         encryption_service: Optional[TokenEncryptionService] = None,
+        on_account_disconnected: Optional[Callable[[str, str], None]] = None,
     ) -> None:
         """Initialize the OAuth manager.
 
@@ -59,11 +79,15 @@ class OAuthManager:
             session: An async SQLAlchemy session for database operations.
             encryption_service: Optional encryption service instance.
                 If not provided, creates one using app settings.
+            on_account_disconnected: Optional callback invoked when an account
+                is marked as disconnected due to token refresh failure.
+                Receives (user_id, provider) as arguments.
         """
         self._session = session
         self._repository = ConnectedAccountRepository(session)
         self._encryption = encryption_service or TokenEncryptionService()
         self._settings = get_settings()
+        self._on_account_disconnected = on_account_disconnected
 
     def initiate_flow(self, provider: str) -> str:
         """Start an OAuth authorization flow.
@@ -115,7 +139,9 @@ class OAuthManager:
         logger.info("Initiated OAuth flow for provider=%s", provider)
         return url
 
-    async def handle_callback(self, code: str, provider: str) -> TokenPair:
+    async def handle_callback(
+        self, code: str, provider: str, user_id: Optional[str] = None
+    ) -> TokenPair:
         """Exchange an authorization code for tokens.
 
         Exchanges the code with the provider's token endpoint, encrypts
@@ -124,6 +150,8 @@ class OAuthManager:
         Args:
             code: The authorization code from the OAuth callback.
             provider: The email provider ("gmail" or "microsoft").
+            user_id: Optional user ID to associate the tokens with.
+                If provided, stores encrypted tokens in the connected account.
 
         Returns:
             A TokenPair with the access and refresh tokens.
@@ -179,14 +207,65 @@ class OAuthManager:
             provider=provider,
         )
 
+        # Store encrypted tokens in the database if user_id is provided
+        if user_id:
+            await self._store_tokens(user_id, provider, token_pair)
+
         logger.info("OAuth tokens obtained for provider=%s", provider)
         return token_pair
+
+    async def _store_tokens(
+        self, user_id: str, provider: str, token_pair: TokenPair
+    ) -> None:
+        """Encrypt and store tokens in the connected account.
+
+        Args:
+            user_id: The user's identifier.
+            provider: The email provider.
+            token_pair: The token pair to encrypt and store.
+        """
+        import uuid as uuid_module
+
+        from sqlalchemy import select
+
+        from src.models.orm import ConnectedAccount as ConnectedAccountORM
+
+        stmt = select(ConnectedAccountORM).where(
+            ConnectedAccountORM.user_id == uuid_module.UUID(user_id),
+            ConnectedAccountORM.provider == provider,
+        )
+        result = await self._session.execute(stmt)
+        account = result.scalar_one_or_none()
+
+        if account is None:
+            logger.warning(
+                "No connected account to store tokens for user=%s provider=%s",
+                user_id,
+                provider,
+            )
+            return
+
+        # Encrypt tokens before storage
+        encrypted_access = self._encryption.encrypt(token_pair.access_token)
+        encrypted_refresh = self._encryption.encrypt(token_pair.refresh_token)
+
+        account.encrypted_access_token = encrypted_access
+        account.encrypted_refresh_token = encrypted_refresh
+        account.token_expires_at = token_pair.expires_at
+        account.status = "connected"
+        await self._session.flush()
+
+        logger.info(
+            "Stored encrypted tokens for user=%s provider=%s", user_id, provider
+        )
 
     async def get_valid_token(self, user_id: str, provider: str) -> str:
         """Get a valid access token, refreshing if near expiry.
 
         Retrieves the stored token for the user/provider combination.
         If the token expires within 5 minutes, it is automatically refreshed.
+        If refresh fails, the account is marked as "disconnected" and a
+        TokenRefreshError is raised.
 
         Args:
             user_id: The user's identifier.
@@ -197,7 +276,7 @@ class OAuthManager:
 
         Raises:
             ValueError: If no connected account is found for the user/provider.
-            RuntimeError: If token refresh fails.
+            TokenRefreshError: If token refresh fails (account marked disconnected).
         """
         import uuid as uuid_module
 
@@ -235,8 +314,31 @@ class OAuthManager:
                     user_id,
                     provider,
                 )
-                token_pair = await self._refresh_token_for_account(account)
-                access_token = token_pair.access_token
+                try:
+                    token_pair = await self._refresh_token_for_account(account)
+                    access_token = token_pair.access_token
+                except Exception as exc:
+                    # Mark account as disconnected on refresh failure (Req 9.5)
+                    account.status = "disconnected"
+                    await self._session.flush()
+
+                    logger.error(
+                        "Token refresh failed for user=%s provider=%s, "
+                        "marking account as disconnected: %s",
+                        user_id,
+                        provider,
+                        exc,
+                    )
+
+                    # Notify via callback if registered
+                    if self._on_account_disconnected:
+                        self._on_account_disconnected(user_id, provider)
+
+                    raise TokenRefreshError(
+                        user_id=user_id,
+                        provider=provider,
+                        reason=str(exc),
+                    ) from exc
 
         return access_token
 
