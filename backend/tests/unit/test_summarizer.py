@@ -177,7 +177,7 @@ class TestBuildSummaryPrompt:
         agent = SummarizerAgent(api_key="test-key")
         prompt = agent.build_summary_prompt(long_email)
 
-        assert "3 sentences" in prompt
+        assert "3 frases" in prompt
         assert "10" in prompt
 
     def test_prompt_requests_json_output(self, mock_gemini, long_email):

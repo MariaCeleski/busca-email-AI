@@ -337,10 +337,10 @@ class TestBuildResponsePrompt:
         """build_response_prompt should include tone analysis when history exists."""
         prompt = response_agent.build_response_prompt(sample_email, sample_search_results)
 
-        assert "Tone guidance" in prompt
-        assert "Greeting style" in prompt
-        assert "Sign-off style" in prompt
-        assert "Average sentence length" in prompt
+        assert "Orientação de tom" in prompt
+        assert "Estilo de saudação" in prompt
+        assert "Estilo de despedida" in prompt
+        assert "Comprimento médio de frase" in prompt
         assert sample_email.sender in prompt
         assert sample_email.subject in prompt
 
@@ -350,7 +350,7 @@ class TestBuildResponsePrompt:
         """build_response_prompt should use neutral professional tone when no history."""
         prompt = response_agent.build_response_prompt(sample_email, [])
 
-        assert "neutral professional tone" in prompt
+        assert "tom profissional neutro" in prompt
         assert sample_email.sender in prompt
         assert sample_email.subject in prompt
 
@@ -387,8 +387,8 @@ class TestBuildResponsePrompt:
         """build_response_prompt should specify 500 words and 150 chars limits."""
         prompt = response_agent.build_response_prompt(sample_email, [])
 
-        assert "500 words" in prompt
-        assert "150 characters" in prompt
+        assert "500 palavras" in prompt
+        assert "150 caracteres" in prompt
 
 
 class TestValidateDraft:
@@ -516,7 +516,7 @@ class TestToneMatching:
         """_build_tone_section should extract greeting patterns from history."""
         tone = response_agent._build_tone_section(sample_search_results)
 
-        assert "Greeting style" in tone
+        assert "Estilo de saudação" in tone
 
     def test_tone_section_includes_sign_off_analysis(
         self, response_agent, sample_search_results
@@ -524,7 +524,7 @@ class TestToneMatching:
         """_build_tone_section should extract sign-off patterns from history."""
         tone = response_agent._build_tone_section(sample_search_results)
 
-        assert "Sign-off style" in tone
+        assert "Estilo de despedida" in tone
 
     def test_tone_section_includes_sentence_length(
         self, response_agent, sample_search_results
@@ -532,13 +532,13 @@ class TestToneMatching:
         """_build_tone_section should include average sentence length."""
         tone = response_agent._build_tone_section(sample_search_results)
 
-        assert "Average sentence length" in tone
+        assert "Comprimento médio de frase" in tone
 
     def test_tone_section_neutral_when_no_history(self, response_agent):
         """_build_tone_section should indicate neutral tone when no history."""
         tone = response_agent._build_tone_section([])
 
-        assert "neutral professional tone" in tone
+        assert "tom profissional neutro" in tone
 
     def test_tone_section_includes_examples(
         self, response_agent, sample_search_results
@@ -546,5 +546,5 @@ class TestToneMatching:
         """_build_tone_section should include historical email examples."""
         tone = response_agent._build_tone_section(sample_search_results)
 
-        assert "Example 1" in tone
+        assert "Exemplo 1" in tone
         assert "0.85" in tone
