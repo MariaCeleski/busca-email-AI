@@ -1,5 +1,5 @@
 # =============================================================================
-# Agente Classificador — classifica e-mails usando o LLM Google Gemini.
+# Agente Classificador — classifica e-mails usando o LLM OpenAI (GPT).
 #
 # Objetivo: Receber um e-mail bruto e produzir uma classificação estruturada
 # contendo categoria (Urgente, Informativo, Promocional, Spam, Transacional, Pessoal),
@@ -13,7 +13,7 @@
 # E-mail vazio: Se assunto e corpo estiverem vazios, retorna Informativo/Baixa/0.0
 #               sem chamar o LLM.
 # =============================================================================
-"""Agente Classificador — classifica e-mails usando Google Gemini LLM."""
+"""Agente Classificador — classifica e-mails usando OpenAI GPT."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ import json
 import logging
 from typing import Optional
 
-import google.generativeai as genai
+from openai import AsyncOpenAI
 
 from src.config import get_settings
 from src.models.classification import ClassificationResult
@@ -38,7 +38,7 @@ class ClassificationError(Exception):
 
 
 class ClassifierAgent:
-    """Classifica e-mails em categorias e prioridades usando Google Gemini LLM."""
+    """Classifica e-mails em categorias e prioridades usando OpenAI GPT."""
 
     # Categorias que requerem geração de rascunho de resposta
     _RESPONSE_CATEGORIES = {EmailCategory.URGENT, EmailCategory.PERSONAL}
@@ -56,13 +56,12 @@ class ClassifierAgent:
         timeout: int = 10,
     ) -> None:
         settings = get_settings()
-        self._api_key = api_key or settings.gemini_api_key
-        self._model_name = model or settings.gemini_model
+        self._api_key = api_key or settings.openai_api_key
+        self._model_name = model or settings.openai_model
         self._timeout = timeout
 
-        # Configura o SDK do Gemini
-        genai.configure(api_key=self._api_key)
-        self._model = genai.GenerativeModel(self._model_name)
+        # Configura o cliente OpenAI
+        self._client = AsyncOpenAI(api_key=self._api_key)
 
     # Método principal: analisa o e-mail e retorna a classificação dentro do timeout de 10s.
     # Lança ClassificationError em caso de timeout ou resposta inválida.
@@ -197,12 +196,14 @@ Responda APENAS com o objeto JSON, sem texto ou formatação adicional."""
             flagged_for_review=flagged_for_review,
         )
 
-    # Chama a API do Gemini e retorna a resposta em texto bruto.
+    # Chama a API da OpenAI e retorna a resposta em texto bruto.
     async def _call_gemini(self, prompt: str) -> str:
-        """Call Gemini API and return raw text response."""
-        response = await self._model.generate_content_async(prompt)
-
-        if response.text is None:
-            raise ClassificationError("Gemini returned empty response")
-
-        return response.text
+        """Call OpenAI API and return raw text response."""
+        response = await self._client.chat.completions.create(
+            model=self._model_name,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        text = response.choices[0].message.content
+        if not text:
+            raise ClassificationError("OpenAI returned empty response")
+        return text

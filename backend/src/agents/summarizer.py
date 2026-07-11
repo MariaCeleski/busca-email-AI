@@ -1,5 +1,5 @@
 # =============================================================================
-# Agente Sumarizador — gera resumos de e-mails usando o LLM Google Gemini.
+# Agente Sumarizador — gera resumos de e-mails usando o LLM OpenAI (GPT).
 #
 # Objetivo: Receber um e-mail longo (> 200 palavras) e produzir um resumo
 # conciso de no máximo 3 frases, além de extrair até 10 itens de ação.
@@ -13,7 +13,7 @@
 # - Se o corpo tiver >= 200 palavras → chama o LLM para resumir
 # - Timeout: 8 segundos. Se exceder ou LLM falhar → usa fallback (primeiras 3 frases)
 # =============================================================================
-"""Agente Sumarizador — gera resumos de e-mails usando Google Gemini LLM."""
+"""Agente Sumarizador — gera resumos de e-mails usando OpenAI GPT."""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ import logging
 import re
 from typing import List, Optional
 
-import google.generativeai as genai
+from openai import AsyncOpenAI
 
 from src.config import get_settings
 from src.models.email import RawEmail
@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 
 class SummarizerAgent:
-    """Sumariza e-mails e extrai itens de ação usando Google Gemini LLM."""
+    """Sumariza e-mails e extrai itens de ação usando OpenAI GPT."""
 
     # Limiar de palavras: e-mails com menos de 200 palavras não são sumarizados
     WORD_THRESHOLD = 200
@@ -45,13 +45,12 @@ class SummarizerAgent:
         timeout: int = 8,
     ) -> None:
         settings = get_settings()
-        self._api_key = api_key or settings.gemini_api_key
-        self._model_name = model or settings.gemini_model
+        self._api_key = api_key or settings.openai_api_key
+        self._model_name = model or settings.openai_model
         self._timeout = timeout
 
-        # Configura o SDK do Gemini
-        genai.configure(api_key=self._api_key)
-        self._model = genai.GenerativeModel(self._model_name)
+        # Configura o cliente OpenAI
+        self._client = AsyncOpenAI(api_key=self._api_key)
 
     # Método principal: gera resumo dentro do timeout de 8s.
     # Retorna fallback (primeiras 3 frases) em caso de falha do LLM ou timeout.
@@ -154,12 +153,14 @@ Responda APENAS com o objeto JSON, sem texto ou formatação adicional."""
             action_items=action_items,
         )
 
-    # Chama a API do Gemini e retorna a resposta em texto bruto.
+    # Chama a API da OpenAI e retorna a resposta em texto bruto.
     async def _call_gemini(self, prompt: str) -> str:
-        """Call Gemini API and return raw text response."""
-        response = await self._model.generate_content_async(prompt)
-
-        if response.text is None:
-            raise RuntimeError("Gemini returned empty response")
-
-        return response.text
+        """Call OpenAI API and return raw text response."""
+        response = await self._client.chat.completions.create(
+            model=self._model_name,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        text = response.choices[0].message.content
+        if not text:
+            raise RuntimeError("OpenAI returned empty response")
+        return text
