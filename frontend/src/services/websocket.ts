@@ -8,6 +8,10 @@ export type WebSocketMessageType =
   | 'email_summarized'
   | 'reply_generated'
   | 'connection_established'
+  | 'auth_suspended'
+  | 'send_failed'
+  | 'deletion_complete'
+  | 'deletion_failed'
 
 export interface WebSocketMessage {
   type: WebSocketMessageType
@@ -30,7 +34,7 @@ export class WebSocketClient {
   constructor(url?: string) {
     const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000'
     const wsBase = baseUrl.replace(/^http/, 'ws')
-    this.url = url || `${wsBase}/ws`
+    this.url = url || `${wsBase}/api/v1/ws`
   }
 
   get isConnected(): boolean {

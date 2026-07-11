@@ -207,10 +207,17 @@ class TestDraftReply:
         assert len(draft.reply_body.split()) == 500
 
     def test_reply_body_over_500_words_rejected(self):
-        body = " ".join(["word"] * 501)
+        body = " ".join(["a"] * 501)
         with pytest.raises(ValidationError) as exc_info:
             self._make_draft(body)
         assert "500 words" in str(exc_info.value)
+
+    def test_reply_body_over_2500_chars_rejected(self):
+        """reply_body max_length is 2500 characters."""
+        body = "x" * 2501
+        with pytest.raises(ValidationError) as exc_info:
+            self._make_draft(body)
+        assert "reply_body" in str(exc_info.value)
 
     def test_suggested_subject_at_150_chars(self):
         subject = "a" * 150
@@ -373,11 +380,22 @@ class TestConnectedAccount:
 class TestErrorResponse:
     def test_error_with_field_errors(self):
         err = ErrorResponse(
+            error="validation_error",
             detail="Validation failed",
-            errors=[
+            field_errors=[
                 FieldError(field="email", message="Invalid format"),
                 FieldError(field="name", message="Required"),
             ],
         )
-        assert len(err.errors) == 2
-        assert err.errors[0].field == "email"
+        assert len(err.field_errors) == 2
+        assert err.field_errors[0].field == "email"
+        assert err.error == "validation_error"
+
+    def test_error_without_field_errors(self):
+        err = ErrorResponse(
+            error="not_found",
+            detail="Resource not found",
+        )
+        assert err.field_errors is None
+        assert err.error == "not_found"
+        assert err.detail == "Resource not found"

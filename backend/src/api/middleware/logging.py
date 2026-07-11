@@ -1,7 +1,9 @@
 """Access logging middleware.
 
-Logs requester_id, endpoint, method, and response_status using AccessLogger.
-No body content is included in logs.
+Logs requester_id, endpoint, method, timestamp, and response_status
+using AccessLogger. No body content is included in logs.
+
+Validates: Requirements 10.4
 """
 
 from __future__ import annotations
@@ -17,12 +19,17 @@ from src.models.database import get_session_factory
 
 logger = logging.getLogger(__name__)
 
+# Paths that should not generate access log entries
+_SKIP_LOGGING_PATHS = {"/docs", "/openapi.json", "/redoc", "/health"}
+
 
 class AccessLoggingMiddleware(BaseHTTPMiddleware):
     """Middleware that logs API access events without body content.
 
-    Logs requester_id (hash of API key or 'anonymous'), endpoint,
-    HTTP method, and response status code.
+    Logs requester_id (from auth state, hashed API key, or 'anonymous'),
+    endpoint, HTTP method, and response status code.
+
+    No email body content or request/response bodies are ever logged.
     """
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
@@ -30,16 +37,11 @@ class AccessLoggingMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
 
         # Don't log health checks or docs
-        if request.url.path in {"/docs", "/openapi.json", "/redoc", "/health"}:
+        if request.url.path in _SKIP_LOGGING_PATHS:
             return response
 
-        # Determine requester ID from API key (hashed) or 'anonymous'
-        api_key = request.headers.get("X-API-Key", "")
-        if api_key:
-            requester_id = hashlib.sha256(api_key.encode()).hexdigest()[:16]
-        else:
-            requester_id = "anonymous"
-
+        # Determine requester ID — prefer value set by auth middleware
+        requester_id = self._get_requester_id(request)
         endpoint = request.url.path
         method = request.method
         response_status = response.status_code
@@ -63,3 +65,32 @@ class AccessLoggingMiddleware(BaseHTTPMiddleware):
             logger.warning("Failed to log access event: %s", exc)
 
         return response
+
+    @staticmethod
+    def _get_requester_id(request: Request) -> str:
+        """Extract requester identity from the request.
+
+        Priority:
+        1. request.state.requester_id (set by AuthMiddleware)
+        2. Hashed API key from X-API-Key header
+        3. 'anonymous' fallback
+
+        Args:
+            request: The incoming HTTP request.
+
+        Returns:
+            A string identifying the requester (never contains body content).
+        """
+        # Check if auth middleware set a requester_id
+        try:
+            if hasattr(request.state, "requester_id"):
+                return request.state.requester_id
+        except Exception:
+            pass
+
+        # Fallback: hash the API key if present
+        api_key = request.headers.get("X-API-Key", "")
+        if api_key:
+            return hashlib.sha256(api_key.encode()).hexdigest()[:16]
+
+        return "anonymous"
