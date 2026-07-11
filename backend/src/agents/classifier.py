@@ -1,4 +1,19 @@
-"""Classifier Agent — classifies emails using Google Gemini LLM."""
+# =============================================================================
+# Agente Classificador — classifica e-mails usando o LLM Google Gemini.
+#
+# Objetivo: Receber um e-mail bruto e produzir uma classificação estruturada
+# contendo categoria (Urgente, Informativo, Promocional, Spam, Transacional, Pessoal),
+# prioridade (Alta, Média, Baixa) e nível de confiança (0.0 a 1.0).
+#
+# Entrada: RawEmail (remetente, assunto, corpo, timestamp)
+# Saída: ClassificationResult (category, priority, confidence, requires_response,
+#         requires_summary, flagged_for_review)
+#
+# Timeout: 10 segundos. Se exceder, lança ClassificationError.
+# E-mail vazio: Se assunto e corpo estiverem vazios, retorna Informativo/Baixa/0.0
+#               sem chamar o LLM.
+# =============================================================================
+"""Agente Classificador — classifica e-mails usando Google Gemini LLM."""
 
 from __future__ import annotations
 
@@ -17,20 +32,21 @@ from src.models.enums import EmailCategory, PriorityLevel
 logger = logging.getLogger(__name__)
 
 
+# Erro lançado quando a classificação falha (timeout, resposta inválida, etc.)
 class ClassificationError(Exception):
     """Raised when email classification fails (timeout, invalid response, etc.)."""
 
 
 class ClassifierAgent:
-    """Classifies emails into categories and priorities using Google Gemini LLM."""
+    """Classifica e-mails em categorias e prioridades usando Google Gemini LLM."""
 
-    # Categories that require a response draft
+    # Categorias que requerem geração de rascunho de resposta
     _RESPONSE_CATEGORIES = {EmailCategory.URGENT, EmailCategory.PERSONAL}
-    # Priorities that qualify for response generation
+    # Prioridades que qualificam para geração de resposta
     _RESPONSE_PRIORITIES = {PriorityLevel.HIGH, PriorityLevel.MEDIUM}
-    # Categories that qualify for summarization
+    # Categorias que qualificam para sumarização
     _SUMMARY_CATEGORIES = {EmailCategory.URGENT, EmailCategory.INFORMATIVE}
-    # Word count threshold for summarization
+    # Limiar de contagem de palavras para sumarização
     _SUMMARY_WORD_THRESHOLD = 200
 
     def __init__(
@@ -44,16 +60,18 @@ class ClassifierAgent:
         self._model_name = model or settings.gemini_model
         self._timeout = timeout
 
-        # Configure the Gemini SDK
+        # Configura o SDK do Gemini
         genai.configure(api_key=self._api_key)
         self._model = genai.GenerativeModel(self._model_name)
 
+    # Método principal: analisa o e-mail e retorna a classificação dentro do timeout de 10s.
+    # Lança ClassificationError em caso de timeout ou resposta inválida.
     async def classify(self, email: RawEmail) -> ClassificationResult:
         """Analyze email and return classification within 10s timeout.
 
         Raises ClassificationError on timeout or invalid response.
         """
-        # Handle empty email (empty subject + body)
+        # Trata e-mail vazio (assunto + corpo vazios)
         if not email.subject.strip() and not email.body.strip():
             return ClassificationResult(
                 category=EmailCategory.INFORMATIVE,
@@ -82,35 +100,40 @@ class ClassifierAgent:
 
         return self.validate_result(raw_output, email)
 
+    # Constrói o prompt estruturado de classificação para o Gemini (em português).
     def build_classification_prompt(self, email: RawEmail) -> str:
         """Construct the structured classification prompt for Gemini."""
-        return f"""You are an email classification assistant. Analyze the following email and classify it.
+        return f"""Você é um assistente de classificação de e-mails. Analise o e-mail a seguir e classifique-o.
 
-Return ONLY a valid JSON object with these exact fields:
-- "category": exactly one of "Urgent", "Informative", "Promotional", "Spam", "Transactional", "Personal"
-- "priority": exactly one of "High", "Medium", "Low"
-- "confidence": a float between 0.0 and 1.0 indicating how confident you are in the classification
+Retorne APENAS um objeto JSON válido com exatamente estes campos:
+- "category": exatamente um entre "Urgent", "Informative", "Promotional", "Spam", "Transactional", "Personal"
+- "priority": exatamente um entre "High", "Medium", "Low"
+- "confidence": um número decimal entre 0.0 e 1.0 indicando o nível de confiança na classificação
 
-Classification guidelines:
-- "Urgent": Time-sensitive emails requiring immediate attention (deadlines, emergencies, critical requests)
-- "Informative": News, updates, reports, or FYI messages that don't need a reply
-- "Promotional": Marketing emails, offers, newsletters from businesses
-- "Spam": Unwanted, unsolicited, or suspicious emails
-- "Transactional": Order confirmations, receipts, shipping notifications, account alerts
-- "Personal": Personal messages from individuals requiring a personal reply
+Diretrizes de classificação:
+- "Urgent": E-mails urgentes que exigem atenção imediata (prazos, emergências, solicitações críticas)
+- "Informative": Notícias, atualizações, relatórios ou mensagens informativas que não precisam de resposta
+- "Promotional": E-mails de marketing, ofertas, newsletters de empresas
+- "Spam": E-mails indesejados, não solicitados ou suspeitos
+- "Transactional": Confirmações de pedidos, recibos, notificações de envio, alertas de conta
+- "Personal": Mensagens pessoais de indivíduos que requerem uma resposta pessoal
 
-Priority guidelines:
-- "High": Requires immediate attention or action
-- "Medium": Important but not time-critical
-- "Low": Can be addressed later or is purely informational
+Diretrizes de prioridade:
+- "High": Requer atenção ou ação imediata
+- "Medium": Importante, mas não urgente
+- "Low": Pode ser tratado depois ou é puramente informativo
 
-Email details:
-- From: {email.sender}
-- Subject: {email.subject}
-- Body: {email.body[:2000]}
+Detalhes do e-mail:
+- De: {email.sender}
+- Assunto: {email.subject}
+- Corpo: {email.body[:2000]}
 
-Respond with ONLY the JSON object, no additional text or formatting."""
+Responda APENAS com o objeto JSON, sem texto ou formatação adicional."""
 
+    # Valida e parseia a saída do LLM contra o schema ClassificationResult.
+    # Calcula requires_response, requires_summary e flagged_for_review
+    # com base nos resultados da classificação e conteúdo do e-mail.
+    # Lança ClassificationError se o parsing ou validação falhar.
     def validate_result(self, raw_output: str, email: Optional[RawEmail] = None) -> ClassificationResult:
         """Parse and validate LLM output against ClassificationResult schema.
 
@@ -120,11 +143,10 @@ Respond with ONLY the JSON object, no additional text or formatting."""
         Raises ClassificationError if parsing or validation fails.
         """
         try:
-            # Strip markdown code fences if present
+            # Remove blocos de código markdown se presentes
             cleaned = raw_output.strip()
             if cleaned.startswith("```"):
                 lines = cleaned.split("\n")
-                # Remove first and last lines (code fences)
                 lines = lines[1:]
                 if lines and lines[-1].strip() == "```":
                     lines = lines[:-1]
@@ -145,16 +167,16 @@ Respond with ONLY the JSON object, no additional text or formatting."""
                 f"Missing or invalid field in LLM response: {exc}"
             ) from exc
 
-        # Clamp confidence to valid range
+        # Limita a confiança ao intervalo válido [0.0, 1.0]
         confidence = max(0.0, min(1.0, confidence))
 
-        # Compute derived fields based on classification logic
+        # Calcula campos derivados baseados na lógica de classificação
         requires_response = (
             category in self._RESPONSE_CATEGORIES
             and priority in self._RESPONSE_PRIORITIES
         )
 
-        # Compute requires_summary based on category and word count
+        # Calcula requires_summary baseado na categoria e contagem de palavras
         word_count = 0
         if email is not None:
             word_count = len(email.body.split())
@@ -163,6 +185,7 @@ Respond with ONLY the JSON object, no additional text or formatting."""
             and word_count > self._SUMMARY_WORD_THRESHOLD
         )
 
+        # Sinaliza para revisão manual se a confiança for menor que 0.6
         flagged_for_review = confidence < 0.6
 
         return ClassificationResult(
@@ -174,6 +197,7 @@ Respond with ONLY the JSON object, no additional text or formatting."""
             flagged_for_review=flagged_for_review,
         )
 
+    # Chama a API do Gemini e retorna a resposta em texto bruto.
     async def _call_gemini(self, prompt: str) -> str:
         """Call Gemini API and return raw text response."""
         response = await self._model.generate_content_async(prompt)

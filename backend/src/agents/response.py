@@ -1,7 +1,27 @@
-"""Response Agent — generates draft replies using Google Gemini with historical context.
+# =============================================================================
+# Agente de Resposta — gera rascunhos de resposta usando Google Gemini com
+# contexto histórico.
+#
+# Objetivo: Receber um e-mail classificado como Urgente ou Pessoal e gerar
+# um rascunho de resposta que imita o tom e estilo de comunicação do usuário,
+# usando busca semântica de e-mails anteriores armazenados no ChromaDB.
+#
+# Entrada: RawEmail + ClassificationResult
+# Saída: DraftReply (reply_body ≤ 500 palavras, suggested_subject ≤ 150 chars)
+#
+# Ferramentas utilizadas:
+# - VectorStoreService (ChromaDB) para busca semântica dos 5 e-mails mais similares
+# - Google Gemini para geração de texto com contexto de tom
+#
+# Regras:
+# - Se todos os resultados de busca têm similaridade < 0.3 → usa tom profissional neutro
+# - Se encontra e-mails similares → analisa estilo de saudação, despedida e comprimento de frase
+# - Timeout: 15 segundos. Se exceder → lança ResponseTimeoutError (draft parcial descartado)
+# =============================================================================
+"""Agente de Resposta — gera rascunhos de resposta usando Google Gemini com contexto histórico.
 
-Uses gemini-2.0-flash for generation and VectorStoreService for semantic search
-of historical emails to match tone and style.
+Usa gemini-2.0-flash para geração e VectorStoreService para busca semântica
+de e-mails históricos para matching de tom e estilo.
 """
 
 from __future__ import annotations
@@ -25,22 +45,25 @@ from src.services.vector_store import VectorStoreService
 
 logger = logging.getLogger(__name__)
 
+# Limiar de similaridade: abaixo de 0.3 considera-se "sem histórico relevante"
 SIMILARITY_THRESHOLD = 0.3
 
 
+# Erro lançado quando a geração de resposta excede o timeout
 class ResponseTimeoutError(Exception):
     """Raised when response generation exceeds the timeout."""
 
 
+# Erro lançado quando o serviço LLM está indisponível ou falha
 class ResponseGenerationError(Exception):
     """Raised when the LLM service is unavailable or fails."""
 
 
 class ResponseAgent:
-    """Generates draft email replies using Google Gemini with historical tone context.
+    """Gera rascunhos de resposta de e-mail usando Google Gemini com contexto de tom histórico.
 
-    Implements semantic search for top-5 similar past emails, tone matching from
-    historical emails, 15-second timeout, and output constraint enforcement.
+    Implementa busca semântica dos top-5 e-mails similares, matching de tom a partir
+    de e-mails históricos, timeout de 15 segundos e validação de restrições de saída.
     """
 
     def __init__(
@@ -159,28 +182,28 @@ class ResponseAgent:
         """
         tone_section = self._build_tone_section(history)
 
-        return f"""You are an email reply assistant. Generate a professional reply to the following email.
+        return f"""Você é um assistente de respostas de e-mail. Gere uma resposta profissional para o e-mail a seguir.
 
 {tone_section}
 
-Current email to reply to:
-- From: {email.sender}
-- Subject: {email.subject}
-- Body: {email.body[:3000]}
+E-mail atual para responder:
+- De: {email.sender}
+- Assunto: {email.subject}
+- Corpo: {email.body[:3000]}
 
-Instructions:
-- The reply body must be at most 500 words.
-- The suggested subject must be at most 150 characters.
-- Incorporate the sender's name, subject line, and key statements from the email.
-- Address the email content directly and be concise.
+Instruções:
+- O corpo da resposta deve ter no máximo 500 palavras.
+- O assunto sugerido deve ter no máximo 150 caracteres.
+- Incorpore o nome do remetente, o assunto e as declarações-chave do e-mail.
+- Responda ao conteúdo do e-mail diretamente e seja conciso.
 
-Return your response as a valid JSON object with exactly these fields:
+Retorne sua resposta como um objeto JSON válido com exatamente estes campos:
 {{
-  "reply_body": "<the body text of the reply>",
-  "suggested_subject": "<a subject line for the reply>"
+  "reply_body": "<o texto do corpo da resposta>",
+  "suggested_subject": "<uma linha de assunto para a resposta>"
 }}
 
-Respond ONLY with the JSON object, no additional text."""
+Responda APENAS com o objeto JSON, sem texto adicional."""
 
     def validate_draft(self, draft: DraftReply) -> DraftReply:
         """Enforce output constraints: max 500 words body, max 150 chars subject.
@@ -262,7 +285,7 @@ Respond ONLY with the JSON object, no additional text."""
         - Sentence structure patterns
         """
         if not history:
-            return "Tone guidance: No historical email context available. Use a neutral professional tone."
+            return "Orientação de tom: Nenhum contexto histórico de e-mail disponível. Use um tom profissional neutro."
 
         # Analyze tone patterns from historical emails
         greetings = []
@@ -304,21 +327,21 @@ Respond ONLY with the JSON object, no additional text."""
         sign_off_style = sign_offs[0] if sign_offs else "Professional sign-off"
 
         examples_text = "\n".join(
-            f"  Example {i+1} (similarity: {h.similarity_score:.2f}): {h.text_snippet}"
+            f"  Exemplo {i+1} (similaridade: {h.similarity_score:.2f}): {h.text_snippet}"
             for i, h in enumerate(history[:5])
             if h.text_snippet
         )
 
-        return f"""Tone guidance from historical emails (match this style):
-- Greeting style: {greeting_style}
-- Sign-off style: {sign_off_style}
-- Average sentence length: ~{avg_sentence_length:.0f} words per sentence
-- Sentence structure: Match the style and rhythm of the examples below
+        return f"""Orientação de tom baseada em e-mails históricos (imite este estilo):
+- Estilo de saudação: {greeting_style}
+- Estilo de despedida: {sign_off_style}
+- Comprimento médio de frase: ~{avg_sentence_length:.0f} palavras por frase
+- Estrutura das frases: Reproduza o estilo e ritmo dos exemplos abaixo
 
-Historical email examples:
+Exemplos de e-mails históricos:
 {examples_text}
 
-Adopt the sentence structure, greeting style, sign-off style, and average sentence length from these historical emails."""
+Adote a estrutura de frases, estilo de saudação, estilo de despedida e comprimento médio de frase destes e-mails históricos."""
 
     def _extract_reply_fields(
         self, raw_output: str, fallback_subject: str

@@ -1,4 +1,26 @@
-"""Agent Orchestrator — coordinates email processing pipeline using LangGraph StateGraph."""
+# =============================================================================
+# Orquestrador de Agentes — coordena o pipeline de processamento de e-mails
+# usando LangGraph StateGraph.
+#
+# Objetivo: Receber um e-mail bruto e coordenar a execução sequencial/condicional
+# dos agentes (Classificador, Sumarizador, Gerador de Resposta) com base na
+# classificação obtida.
+#
+# Fluxo LangGraph:
+#   Entry → classify → [routing condicional] → summarize / generate_response / manual_review → publish_results → END
+#
+# Funcionalidades:
+# - Estado tipado (EmailWorkflowState) que flui entre os nós do grafo
+# - Routing condicional baseado em categoria, prioridade e confiança
+# - Dual path: e-mails urgentes com corpo > 200 palavras recebem resumo E resposta
+# - Retry por agente (até 3 tentativas) com timeout de 30s por execução
+# - Processamento concorrente de até 10 e-mails simultâneos (via semáforo)
+# - Estado isolado por e-mail (sem compartilhamento entre execuções paralelas)
+#
+# Entrada: RawEmail
+# Saída: Dict com classification, summary, draft_reply, current_stage, error
+# =============================================================================
+"""Orquestrador de Agentes — coordena o pipeline de processamento de e-mails usando LangGraph StateGraph."""
 
 from __future__ import annotations
 
@@ -22,20 +44,30 @@ from src.models.summary import SummaryResult
 logger = logging.getLogger(__name__)
 
 
+# Estado que flui através do workflow LangGraph.
+# Contém o e-mail original, resultados intermediários de cada agente,
+# contadores de retry e flags de controle.
 class EmailWorkflowState(TypedDict, total=False):
-    """State that flows through the LangGraph workflow."""
+    """Estado que flui através do workflow LangGraph."""
 
-    email: RawEmail
-    classification: Optional[ClassificationResult]
-    summary: Optional[SummaryResult]
-    draft_reply: Optional[DraftReply]
-    retry_counts: Dict[str, int]
-    current_stage: str
-    error: Optional[str]
-    flagged_for_review: bool
-    needs_dual_path: bool
+    email: RawEmail                                  # E-mail bruto de entrada
+    classification: Optional[ClassificationResult]   # Resultado da classificação
+    summary: Optional[SummaryResult]                 # Resultado da sumarização
+    draft_reply: Optional[DraftReply]                # Rascunho de resposta gerado
+    retry_counts: Dict[str, int]                     # Contagem de retries por agente
+    current_stage: str                               # Estágio atual do workflow
+    error: Optional[str]                             # Mensagem de erro (se houver)
+    flagged_for_review: bool                         # Sinalizado para revisão manual
+    needs_dual_path: bool                            # Precisa de resumo + resposta
 
 
+# Determina o próximo nó baseado nos resultados da classificação.
+#
+# Lógica de roteamento (conforme Requisitos 2.7, 2.8, 3.1):
+# - Se confiança < 0.6 → revisão manual
+# - Se categoria é Urgente E corpo > 200 palavras E prioridade Alta/Média → sumarizar (dual path)
+# - Se categoria em {Urgente, Pessoal} E prioridade {Alta, Média} → gerar resposta
+# - Se categoria em {Informativo, Promocional, Transacional, Spam} OU prioridade Baixa → sumarizar
 def route_after_classification(state: EmailWorkflowState) -> str:
     """Determine next node based on classification results.
 
@@ -79,6 +111,9 @@ def route_after_classification(state: EmailWorkflowState) -> str:
     return "summarize"
 
 
+# Determina o próximo nó após a sumarização.
+# Se o e-mail está no dual path (Urgente + >200 palavras + Alta/Média) → gera resposta também.
+# Caso contrário → vai direto para publicar resultados.
 def route_after_summarize(state: EmailWorkflowState) -> str:
     """Determine next node after summarization.
 
@@ -92,6 +127,22 @@ def route_after_summarize(state: EmailWorkflowState) -> str:
     return "publish_results"
 
 
+# Constrói o grafo LangGraph StateGraph para o pipeline de processamento de e-mails.
+#
+# Nós:
+# - classify: chama ClassifierAgent.classify()
+# - summarize: chama SummarizerAgent.summarize()
+# - generate_response: chama ResponseAgent.generate_reply()
+# - manual_review: sinaliza o e-mail para revisão humana
+# - publish_results: agrega os resultados finais
+#
+# Arestas:
+# - Entrada → classify
+# - classify → roteamento condicional via route_after_classification
+# - summarize → roteamento condicional via route_after_summarize
+# - generate_response → publish_results
+# - manual_review → publish_results
+# - publish_results → END
 def build_email_workflow(
     classifier: ClassifierAgent,
     summarizer: SummarizerAgent,
@@ -258,6 +309,13 @@ def build_email_workflow(
     return workflow
 
 
+# Orquestrador multi-agente para o pipeline de processamento de e-mails.
+#
+# Funcionalidades:
+# - Retry por agente até max_retries tentativas
+# - Timeout rígido de 30 segundos por execução de agente
+# - Processamento concorrente de até max_concurrent e-mails simultâneos
+# - Estado isolado por e-mail (sem interferência entre execuções paralelas)
 class AgentOrchestrator:
     """Orchestrates the multi-agent email processing pipeline.
 
