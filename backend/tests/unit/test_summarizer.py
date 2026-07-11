@@ -62,20 +62,29 @@ def _valid_summary_json(
 
 
 def _make_gemini_response(text: str) -> MagicMock:
-    """Build a mock Gemini response object."""
+    """Build a mock OpenAI response object."""
     response = MagicMock()
-    response.text = text
+    response.choices = [MagicMock()]
+    response.choices[0].message.content = text
     return response
+
+
+
+
+
 
 
 @pytest.fixture
 def mock_gemini():
     """Patch google.generativeai to avoid real API calls."""
-    with patch("src.agents.summarizer.genai") as mock_genai:
-        mock_model_instance = MagicMock()
-        mock_model_instance.generate_content_async = AsyncMock()
-        mock_genai.GenerativeModel.return_value = mock_model_instance
-        yield mock_genai, mock_model_instance
+    with patch("src.agents.summarizer.AsyncOpenAI") as MockOpenAI:
+        mock_client = AsyncMock()
+        mock_client.chat = MagicMock()
+        mock_client.chat.completions = MagicMock()
+        mock_client.chat.completions.create = AsyncMock()
+        
+        MockOpenAI.return_value = mock_client
+        yield MockOpenAI, mock_client
 
 
 class TestSummarizerAgentInit:
@@ -93,9 +102,9 @@ class TestSummarizerAgentInit:
 
     def test_init_configures_gemini(self, mock_gemini):
         """Test agent configures the Gemini SDK with the API key."""
-        mock_genai, _ = mock_gemini
+        MockOpenAI, _ = mock_gemini
         SummarizerAgent(api_key="test-key-123")
-        mock_genai.configure.assert_called_with(api_key="test-key-123")
+        MockOpenAI.assert_called_with(api_key="test-key-123")
 
 
 class TestShouldSummarize:
@@ -245,7 +254,7 @@ class TestSummarize:
     @pytest.mark.asyncio
     async def test_summarize_short_email_no_llm_call(self, mock_gemini, short_email):
         """Test short email returns body unmodified without LLM call."""
-        _, mock_model = mock_gemini
+        _, mock_client = mock_gemini
         agent = SummarizerAgent(api_key="test-key")
         result = await agent.summarize(short_email)
 
@@ -253,13 +262,13 @@ class TestSummarize:
         assert result.action_items == []
         assert result.is_fallback is False
         # Ensure no LLM call was made
-        mock_model.generate_content_async.assert_not_called()
+        mock_client.chat.completions.create.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_summarize_long_email_success(self, mock_gemini, long_email):
         """Test long email gets summarized via Gemini."""
-        _, mock_model = mock_gemini
-        mock_model.generate_content_async = AsyncMock(
+        _, mock_client = mock_gemini
+        mock_client.chat.completions.create = AsyncMock(
             return_value=_make_gemini_response(
                 _valid_summary_json(
                     summary="Project update looks good.",
@@ -278,13 +287,13 @@ class TestSummarize:
     @pytest.mark.asyncio
     async def test_summarize_timeout_returns_fallback(self, mock_gemini, long_email):
         """Test timeout returns fallback summary."""
-        _, mock_model = mock_gemini
+        _, mock_client = mock_gemini
 
         async def slow_response(*args, **kwargs):
             await asyncio.sleep(20)
             return _make_gemini_response(_valid_summary_json())
 
-        mock_model.generate_content_async = slow_response
+        mock_client.chat.completions.create = slow_response
 
         agent = SummarizerAgent(api_key="test-key", timeout=1)
         result = await agent.summarize(long_email)
@@ -295,8 +304,8 @@ class TestSummarize:
     @pytest.mark.asyncio
     async def test_summarize_api_error_returns_fallback(self, mock_gemini, long_email):
         """Test API error returns fallback summary."""
-        _, mock_model = mock_gemini
-        mock_model.generate_content_async = AsyncMock(
+        _, mock_client = mock_gemini
+        mock_client.chat.completions.create = AsyncMock(
             side_effect=RuntimeError("API down")
         )
 
@@ -308,8 +317,8 @@ class TestSummarize:
     @pytest.mark.asyncio
     async def test_summarize_invalid_json_returns_fallback(self, mock_gemini, long_email):
         """Test invalid JSON from LLM returns fallback."""
-        _, mock_model = mock_gemini
-        mock_model.generate_content_async = AsyncMock(
+        _, mock_client = mock_gemini
+        mock_client.chat.completions.create = AsyncMock(
             return_value=_make_gemini_response("not valid json at all")
         )
 
@@ -338,10 +347,10 @@ class TestSummarize:
     @pytest.mark.asyncio
     async def test_summarize_gemini_empty_response_returns_fallback(self, mock_gemini, long_email):
         """Test empty Gemini response (None text) returns fallback."""
-        _, mock_model = mock_gemini
+        _, mock_client = mock_gemini
         response = MagicMock()
-        response.text = None
-        mock_model.generate_content_async = AsyncMock(return_value=response)
+        response.choices = [MagicMock()]; response.choices[0].message.content = None
+        mock_client.chat.completions.create = AsyncMock(return_value=response)
 
         agent = SummarizerAgent(api_key="test-key")
         result = await agent.summarize(long_email)
@@ -351,9 +360,9 @@ class TestSummarize:
     @pytest.mark.asyncio
     async def test_summarize_action_items_capped_at_10(self, mock_gemini, long_email):
         """Test action items are capped at 10 even if LLM returns more."""
-        _, mock_model = mock_gemini
+        _, mock_client = mock_gemini
         too_many_items = [f"Item {i}" for i in range(15)]
-        mock_model.generate_content_async = AsyncMock(
+        mock_client.chat.completions.create = AsyncMock(
             return_value=_make_gemini_response(
                 json.dumps({"summary": "A summary.", "action_items": too_many_items})
             )
@@ -367,9 +376,9 @@ class TestSummarize:
     @pytest.mark.asyncio
     async def test_summarize_json_with_code_fences(self, mock_gemini, long_email):
         """Test parsing JSON wrapped in markdown code fences."""
-        _, mock_model = mock_gemini
+        _, mock_client = mock_gemini
         wrapped = "```json\n" + _valid_summary_json("Wrapped summary.") + "\n```"
-        mock_model.generate_content_async = AsyncMock(
+        mock_client.chat.completions.create = AsyncMock(
             return_value=_make_gemini_response(wrapped)
         )
 
