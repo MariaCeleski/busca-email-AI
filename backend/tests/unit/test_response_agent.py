@@ -27,9 +27,10 @@ from src.models.vector_store import EmailMetadata, SearchResult
 
 
 def _make_gemini_response(text: str) -> MagicMock:
-    """Build a mock Gemini GenerateContentResponse object."""
+    """Build a mock OpenAI response object."""
     response = MagicMock()
-    response.text = text
+    response.choices = [MagicMock()]
+    response.choices[0].message.content = text
     return response
 
 
@@ -54,13 +55,15 @@ def mock_settings():
 @pytest.fixture
 def mock_genai():
     """Patch google.generativeai to avoid real API calls."""
-    with patch("src.agents.response.genai") as mock_genai_module:
-        mock_model_instance = MagicMock()
-        mock_model_instance.generate_content.return_value = _make_gemini_response(
-            _json_reply()
+    with patch("src.agents.response.AsyncOpenAI") as MockOpenAI:
+        mock_client = MagicMock()
+        mock_client.chat = MagicMock()
+        mock_client.chat.completions = MagicMock()
+        mock_client.chat.completions.create = AsyncMock(
+            return_value=_make_gemini_response(_json_reply())
         )
-        mock_genai_module.GenerativeModel.return_value = mock_model_instance
-        yield mock_genai_module, mock_model_instance
+        MockOpenAI.return_value = mock_client
+        yield MockOpenAI, mock_client
 
 
 @pytest.fixture
@@ -188,14 +191,14 @@ class TestGenerateReply:
 
         On timeout, the partial draft is discarded — no partial result is returned.
         """
-        _, mock_model = mock_genai
+        _, mock_client = mock_genai
 
-        def slow_response(*args, **kwargs):
-            import time
-            time.sleep(5)
+        async def slow_response(*args, **kwargs):
+            import asyncio
+            await asyncio.sleep(5)
             return _make_gemini_response(_json_reply())
 
-        mock_model.generate_content = slow_response
+        mock_client.chat.completions.create = slow_response
 
         agent = ResponseAgent(vector_store=mock_vector_store, timeout=1)
 
@@ -207,8 +210,8 @@ class TestGenerateReply:
         self, mock_settings, mock_genai, mock_vector_store, sample_email, sample_classification
     ):
         """generate_reply should raise ResponseGenerationError on service failure."""
-        _, mock_model = mock_genai
-        mock_model.generate_content.side_effect = Exception("Service unavailable")
+        _, mock_client = mock_genai
+        mock_client.chat.completions.create = AsyncMock(side_effect=Exception("Service unavailable"))
 
         agent = ResponseAgent(vector_store=mock_vector_store, timeout=15)
 

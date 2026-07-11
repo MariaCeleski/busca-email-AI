@@ -79,20 +79,23 @@ def _valid_classification_json(
 
 
 def _make_gemini_response(text: str) -> MagicMock:
-    """Build a mock Gemini response object."""
+    """Build a mock OpenAI response object."""
     response = MagicMock()
-    response.text = text
+    response.choices = [MagicMock()]
+    response.choices[0].message.content = text
     return response
 
 
 @pytest.fixture
 def mock_gemini():
     """Patch google.generativeai to avoid real API calls."""
-    with patch("src.agents.classifier.genai") as mock_genai:
-        mock_model_instance = MagicMock()
-        mock_model_instance.generate_content_async = AsyncMock()
-        mock_genai.GenerativeModel.return_value = mock_model_instance
-        yield mock_genai, mock_model_instance
+    with patch("src.agents.classifier.AsyncOpenAI") as MockOpenAI:
+        mock_client = AsyncMock()
+        mock_client.chat = MagicMock()
+        mock_client.chat.completions = MagicMock()
+        mock_client.chat.completions.create = AsyncMock()
+        MockOpenAI.return_value = mock_client
+        yield MockOpenAI, mock_client
 
 
 class TestClassifierAgentInit:
@@ -110,9 +113,9 @@ class TestClassifierAgentInit:
 
     def test_init_configures_genai(self, mock_gemini):
         """Test that genai.configure is called with the API key."""
-        mock_genai, _ = mock_gemini
+        MockOpenAI, _ = mock_gemini
         ClassifierAgent(api_key="test-key-123")
-        mock_genai.configure.assert_called_with(api_key="test-key-123")
+        MockOpenAI.assert_called_with(api_key="test-key-123")
 
 
 class TestBuildClassificationPrompt:
@@ -326,7 +329,7 @@ class TestClassify:
     @pytest.mark.asyncio
     async def test_classify_empty_email(self, mock_gemini, empty_email):
         """Test empty email returns default classification without calling LLM."""
-        _, mock_model = mock_gemini
+        _, mock_client = mock_gemini
         agent = ClassifierAgent(api_key="test-key")
         result = await agent.classify(empty_email)
 
@@ -338,13 +341,13 @@ class TestClassify:
         assert result.requires_summary is False
 
         # Verify LLM was NOT called for empty emails
-        mock_model.generate_content_async.assert_not_called()
+        mock_client.chat.completions.create.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_classify_success(self, mock_gemini, sample_email):
         """Test successful classification via Gemini."""
-        _, mock_model = mock_gemini
-        mock_model.generate_content_async = AsyncMock(
+        _, mock_client = mock_gemini
+        mock_client.chat.completions.create = AsyncMock(
             return_value=_make_gemini_response(_valid_classification_json())
         )
 
@@ -359,8 +362,8 @@ class TestClassify:
     @pytest.mark.asyncio
     async def test_classify_personal_medium(self, mock_gemini, short_personal_email):
         """Test Personal + Medium triggers requires_response."""
-        _, mock_model = mock_gemini
-        mock_model.generate_content_async = AsyncMock(
+        _, mock_client = mock_gemini
+        mock_client.chat.completions.create = AsyncMock(
             return_value=_make_gemini_response(
                 _valid_classification_json(category="Personal", priority="Medium", confidence=0.85)
             )
@@ -377,13 +380,13 @@ class TestClassify:
     @pytest.mark.asyncio
     async def test_classify_timeout_raises_error(self, mock_gemini, sample_email):
         """Test timeout raises ClassificationError."""
-        _, mock_model = mock_gemini
+        _, mock_client = mock_gemini
 
         async def slow_response(*args, **kwargs):
             await asyncio.sleep(20)
             return _make_gemini_response(_valid_classification_json())
 
-        mock_model.generate_content_async = slow_response
+        mock_client.chat.completions.create = slow_response
 
         agent = ClassifierAgent(api_key="test-key", timeout=1)
 
@@ -395,8 +398,8 @@ class TestClassify:
         self, mock_gemini, sample_email
     ):
         """Test Gemini API error is wrapped in ClassificationError."""
-        _, mock_model = mock_gemini
-        mock_model.generate_content_async = AsyncMock(
+        _, mock_client = mock_gemini
+        mock_client.chat.completions.create = AsyncMock(
             side_effect=RuntimeError("API unavailable")
         )
 
@@ -410,21 +413,22 @@ class TestClassify:
         self, mock_gemini, sample_email
     ):
         """Test that an empty Gemini response raises ClassificationError."""
-        _, mock_model = mock_gemini
+        _, mock_client = mock_gemini
         empty_response = MagicMock()
-        empty_response.text = None
-        mock_model.generate_content_async = AsyncMock(return_value=empty_response)
+        empty_response.choices = [MagicMock()]
+        empty_response.choices[0].message.content = None
+        mock_client.chat.completions.create = AsyncMock(return_value=empty_response)
 
         agent = ClassifierAgent(api_key="test-key")
 
-        with pytest.raises(ClassificationError, match="Gemini returned empty response"):
+        with pytest.raises(ClassificationError, match="OpenAI returned empty response"):
             await agent.classify(sample_email)
 
     @pytest.mark.asyncio
     async def test_classify_low_confidence_flags_review(self, mock_gemini, sample_email):
         """Test low confidence result is flagged for review."""
-        _, mock_model = mock_gemini
-        mock_model.generate_content_async = AsyncMock(
+        _, mock_client = mock_gemini
+        mock_client.chat.completions.create = AsyncMock(
             return_value=_make_gemini_response(
                 _valid_classification_json(confidence=0.3)
             )
@@ -439,8 +443,8 @@ class TestClassify:
     @pytest.mark.asyncio
     async def test_classify_long_urgent_email(self, mock_gemini, long_urgent_email):
         """Test classification of long urgent email sets requires_summary=True."""
-        _, mock_model = mock_gemini
-        mock_model.generate_content_async = AsyncMock(
+        _, mock_client = mock_gemini
+        mock_client.chat.completions.create = AsyncMock(
             return_value=_make_gemini_response(
                 _valid_classification_json(category="Urgent", priority="High", confidence=0.95)
             )

@@ -33,7 +33,7 @@ import re
 from datetime import datetime
 from typing import List, Optional
 
-import google.generativeai as genai
+from openai import AsyncOpenAI
 
 from src.config import get_settings
 from src.models.classification import ClassificationResult
@@ -75,13 +75,12 @@ class ResponseAgent:
     ) -> None:
         settings = get_settings()
         self._vector_store = vector_store
-        self._api_key = api_key or settings.gemini_api_key
-        self._model_name = model or settings.gemini_model
+        self._api_key = api_key or settings.openai_api_key
+        self._model_name = model or settings.openai_model
         self._timeout = timeout if timeout is not None else settings.response_timeout_seconds
 
-        # Configure Gemini API
-        genai.configure(api_key=self._api_key)
-        self._model = genai.GenerativeModel(self._model_name)
+        # Configura o cliente OpenAI
+        self._client = AsyncOpenAI(api_key=self._api_key)
 
     async def generate_reply(
         self, email: RawEmail, classification: ClassificationResult
@@ -409,12 +408,9 @@ Adote a estrutura de frases, estilo de saudação, estilo de despedida e comprim
         return reply_body, suggested_subject
 
     async def _call_gemini(self, prompt: str) -> str:
-        """Call Gemini API and return raw text response.
-
-        Uses asyncio.to_thread to avoid blocking the event loop since
-        google-generativeai SDK uses synchronous calls.
-        """
-        response = await asyncio.to_thread(
-            self._model.generate_content, prompt
+        """Call OpenAI API and return raw text response."""
+        response = await self._client.chat.completions.create(
+            model=self._model_name,
+            messages=[{"role": "user", "content": prompt}],
         )
-        return response.text or ""
+        return response.choices[0].message.content or ""
