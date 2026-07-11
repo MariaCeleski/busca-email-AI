@@ -1,4 +1,4 @@
-"""Unit tests for the ClassifierAgent."""
+"""Unit tests for the ClassifierAgent with Google Gemini LLM."""
 
 import asyncio
 import json
@@ -37,65 +37,88 @@ def empty_email() -> RawEmail:
     )
 
 
+@pytest.fixture
+def long_urgent_email() -> RawEmail:
+    """An email with body > 200 words to test requires_summary logic."""
+    long_body = " ".join(["word"] * 250)
+    return RawEmail(
+        provider_message_id="msg-003",
+        sender="boss@company.com",
+        subject="URGENT: Project Deadline Change",
+        body=long_body,
+        timestamp=datetime(2024, 1, 15, 10, 0, 0),
+        provider="gmail",
+    )
+
+
+@pytest.fixture
+def short_personal_email() -> RawEmail:
+    """A short personal email (< 200 words) for requires_summary=False."""
+    return RawEmail(
+        provider_message_id="msg-004",
+        sender="friend@personal.com",
+        subject="Hey, how are you?",
+        body="Just checking in. How have you been? Let me know if you want to grab lunch.",
+        timestamp=datetime(2024, 1, 15, 10, 0, 0),
+        provider="gmail",
+    )
+
+
 def _valid_classification_json(
     category: str = "Urgent",
     priority: str = "High",
     confidence: float = 0.92,
-    requires_response: bool = True,
-    requires_summary: bool = True,
 ) -> str:
     return json.dumps(
         {
             "category": category,
             "priority": priority,
             "confidence": confidence,
-            "requires_response": requires_response,
-            "requires_summary": requires_summary,
         }
     )
 
 
-def _make_openai_response(text: str) -> MagicMock:
-    """Build a mock OpenAI ChatCompletion response object."""
+def _make_gemini_response(text: str) -> MagicMock:
+    """Build a mock Gemini response object."""
     response = MagicMock()
-    message = MagicMock()
-    message.content = text
-    choice = MagicMock()
-    choice.message = message
-    response.choices = [choice]
+    response.text = text
     return response
 
 
 @pytest.fixture
-def mock_openai():
-    """Patch AsyncOpenAI to avoid real API calls."""
-    with patch("src.agents.classifier.AsyncOpenAI") as mock_cls:
-        mock_client_instance = MagicMock()
-        mock_client_instance.chat = MagicMock()
-        mock_client_instance.chat.completions = MagicMock()
-        mock_client_instance.chat.completions.create = AsyncMock()
-        mock_cls.return_value = mock_client_instance
-        yield mock_cls, mock_client_instance
+def mock_gemini():
+    """Patch google.generativeai to avoid real API calls."""
+    with patch("src.agents.classifier.genai") as mock_genai:
+        mock_model_instance = MagicMock()
+        mock_model_instance.generate_content_async = AsyncMock()
+        mock_genai.GenerativeModel.return_value = mock_model_instance
+        yield mock_genai, mock_model_instance
 
 
 class TestClassifierAgentInit:
     """Tests for ClassifierAgent initialization."""
 
-    def test_init_with_defaults(self, mock_openai):
+    def test_init_with_defaults(self, mock_gemini):
         """Test agent initializes with settings defaults."""
-        agent = ClassifierAgent(api_key="test-key", model="gpt-4o")
+        agent = ClassifierAgent(api_key="test-key", model="gemini-2.0-flash")
         assert agent._timeout == 10
 
-    def test_init_with_custom_timeout(self, mock_openai):
+    def test_init_with_custom_timeout(self, mock_gemini):
         """Test agent respects custom timeout."""
         agent = ClassifierAgent(api_key="test-key", timeout=5)
         assert agent._timeout == 5
+
+    def test_init_configures_genai(self, mock_gemini):
+        """Test that genai.configure is called with the API key."""
+        mock_genai, _ = mock_gemini
+        ClassifierAgent(api_key="test-key-123")
+        mock_genai.configure.assert_called_with(api_key="test-key-123")
 
 
 class TestBuildClassificationPrompt:
     """Tests for prompt construction."""
 
-    def test_prompt_contains_email_info(self, mock_openai, sample_email):
+    def test_prompt_contains_email_info(self, mock_gemini, sample_email):
         """Test prompt includes sender, subject, and body."""
         agent = ClassifierAgent(api_key="test-key")
         prompt = agent.build_classification_prompt(sample_email)
@@ -104,7 +127,7 @@ class TestBuildClassificationPrompt:
         assert "Meeting tomorrow at 9am" in prompt
         assert "confirm your attendance" in prompt
 
-    def test_prompt_includes_categories(self, mock_openai, sample_email):
+    def test_prompt_includes_categories(self, mock_gemini, sample_email):
         """Test prompt mentions valid categories."""
         agent = ClassifierAgent(api_key="test-key")
         prompt = agent.build_classification_prompt(sample_email)
@@ -112,7 +135,7 @@ class TestBuildClassificationPrompt:
         for cat in ["Urgent", "Informative", "Promotional", "Spam", "Transactional", "Personal"]:
             assert cat in prompt
 
-    def test_prompt_includes_priorities(self, mock_openai, sample_email):
+    def test_prompt_includes_priorities(self, mock_gemini, sample_email):
         """Test prompt mentions valid priorities."""
         agent = ClassifierAgent(api_key="test-key")
         prompt = agent.build_classification_prompt(sample_email)
@@ -120,48 +143,62 @@ class TestBuildClassificationPrompt:
         for pri in ["High", "Medium", "Low"]:
             assert pri in prompt
 
+    def test_prompt_truncates_long_body(self, mock_gemini):
+        """Test that body is truncated to 2000 chars in the prompt."""
+        long_email = RawEmail(
+            provider_message_id="msg-long",
+            sender="sender@test.com",
+            subject="Long email",
+            body="x" * 5000,
+            timestamp=datetime(2024, 1, 15, 10, 0, 0),
+            provider="gmail",
+        )
+        agent = ClassifierAgent(api_key="test-key")
+        prompt = agent.build_classification_prompt(long_email)
+
+        # Should contain at most 2000 x's from the body
+        assert "x" * 2001 not in prompt
+
 
 class TestValidateResult:
     """Tests for LLM output validation."""
 
-    def test_valid_json_parsed_correctly(self, mock_openai):
+    def test_valid_json_parsed_correctly(self, mock_gemini, sample_email):
         """Test valid JSON is parsed into ClassificationResult."""
         agent = ClassifierAgent(api_key="test-key")
         raw = _valid_classification_json()
-        result = agent.validate_result(raw)
+        result = agent.validate_result(raw, sample_email)
 
         assert isinstance(result, ClassificationResult)
         assert result.category == EmailCategory.URGENT
         assert result.priority == PriorityLevel.HIGH
         assert result.confidence == 0.92
-        assert result.requires_response is True
-        assert result.requires_summary is True
         assert result.flagged_for_review is False
 
-    def test_low_confidence_flags_for_review(self, mock_openai):
+    def test_low_confidence_flags_for_review(self, mock_gemini, sample_email):
         """Test confidence < 0.6 sets flagged_for_review."""
         agent = ClassifierAgent(api_key="test-key")
         raw = _valid_classification_json(confidence=0.4)
-        result = agent.validate_result(raw)
+        result = agent.validate_result(raw, sample_email)
 
         assert result.flagged_for_review is True
 
-    def test_confidence_exactly_0_6_not_flagged(self, mock_openai):
+    def test_confidence_exactly_0_6_not_flagged(self, mock_gemini, sample_email):
         """Test confidence == 0.6 is not flagged."""
         agent = ClassifierAgent(api_key="test-key")
         raw = _valid_classification_json(confidence=0.6)
-        result = agent.validate_result(raw)
+        result = agent.validate_result(raw, sample_email)
 
         assert result.flagged_for_review is False
 
-    def test_invalid_json_raises_error(self, mock_openai):
+    def test_invalid_json_raises_error(self, mock_gemini):
         """Test invalid JSON raises ClassificationError."""
         agent = ClassifierAgent(api_key="test-key")
 
         with pytest.raises(ClassificationError, match="Invalid JSON"):
             agent.validate_result("not json at all")
 
-    def test_missing_field_raises_error(self, mock_openai):
+    def test_missing_field_raises_error(self, mock_gemini):
         """Test missing required field raises ClassificationError."""
         agent = ClassifierAgent(api_key="test-key")
         raw = json.dumps({"category": "Urgent"})  # missing other fields
@@ -169,7 +206,7 @@ class TestValidateResult:
         with pytest.raises(ClassificationError, match="Missing or invalid field"):
             agent.validate_result(raw)
 
-    def test_invalid_category_raises_error(self, mock_openai):
+    def test_invalid_category_raises_error(self, mock_gemini):
         """Test invalid category value raises ClassificationError."""
         agent = ClassifierAgent(api_key="test-key")
         raw = json.dumps(
@@ -177,40 +214,119 @@ class TestValidateResult:
                 "category": "Unknown",
                 "priority": "High",
                 "confidence": 0.9,
-                "requires_response": True,
-                "requires_summary": False,
             }
         )
 
         with pytest.raises(ClassificationError, match="Missing or invalid field"):
             agent.validate_result(raw)
 
-    def test_json_wrapped_in_code_fence(self, mock_openai):
+    def test_json_wrapped_in_code_fence(self, mock_gemini, sample_email):
         """Test JSON wrapped in markdown code fences is handled."""
         agent = ClassifierAgent(api_key="test-key")
         raw = f"```json\n{_valid_classification_json()}\n```"
-        result = agent.validate_result(raw)
+        result = agent.validate_result(raw, sample_email)
 
         assert result.category == EmailCategory.URGENT
 
-    def test_confidence_clamped_to_range(self, mock_openai):
+    def test_confidence_clamped_to_range(self, mock_gemini, sample_email):
         """Test confidence values outside 0-1 are clamped."""
         agent = ClassifierAgent(api_key="test-key")
+
         raw = _valid_classification_json(confidence=1.5)
-        result = agent.validate_result(raw)
+        result = agent.validate_result(raw, sample_email)
         assert result.confidence == 1.0
 
         raw = _valid_classification_json(confidence=-0.3)
-        result = agent.validate_result(raw)
+        result = agent.validate_result(raw, sample_email)
         assert result.confidence == 0.0
+
+
+class TestRequiresResponse:
+    """Tests for the requires_response derived field logic."""
+
+    def test_urgent_high_requires_response(self, mock_gemini, sample_email):
+        """Urgent + High priority => requires_response=True."""
+        agent = ClassifierAgent(api_key="test-key")
+        raw = _valid_classification_json(category="Urgent", priority="High")
+        result = agent.validate_result(raw, sample_email)
+        assert result.requires_response is True
+
+    def test_personal_medium_requires_response(self, mock_gemini, sample_email):
+        """Personal + Medium priority => requires_response=True."""
+        agent = ClassifierAgent(api_key="test-key")
+        raw = _valid_classification_json(category="Personal", priority="Medium")
+        result = agent.validate_result(raw, sample_email)
+        assert result.requires_response is True
+
+    def test_urgent_low_does_not_require_response(self, mock_gemini, sample_email):
+        """Urgent + Low priority => requires_response=False."""
+        agent = ClassifierAgent(api_key="test-key")
+        raw = _valid_classification_json(category="Urgent", priority="Low")
+        result = agent.validate_result(raw, sample_email)
+        assert result.requires_response is False
+
+    def test_informative_high_does_not_require_response(self, mock_gemini, sample_email):
+        """Informative + High priority => requires_response=False."""
+        agent = ClassifierAgent(api_key="test-key")
+        raw = _valid_classification_json(category="Informative", priority="High")
+        result = agent.validate_result(raw, sample_email)
+        assert result.requires_response is False
+
+    def test_spam_any_priority_does_not_require_response(self, mock_gemini, sample_email):
+        """Spam + any priority => requires_response=False."""
+        agent = ClassifierAgent(api_key="test-key")
+        for priority in ["High", "Medium", "Low"]:
+            raw = _valid_classification_json(category="Spam", priority=priority)
+            result = agent.validate_result(raw, sample_email)
+            assert result.requires_response is False
+
+
+class TestRequiresSummary:
+    """Tests for the requires_summary derived field logic."""
+
+    def test_urgent_long_body_requires_summary(self, mock_gemini, long_urgent_email):
+        """Urgent + body > 200 words => requires_summary=True."""
+        agent = ClassifierAgent(api_key="test-key")
+        raw = _valid_classification_json(category="Urgent", priority="High")
+        result = agent.validate_result(raw, long_urgent_email)
+        assert result.requires_summary is True
+
+    def test_informative_long_body_requires_summary(self, mock_gemini, long_urgent_email):
+        """Informative + body > 200 words => requires_summary=True."""
+        agent = ClassifierAgent(api_key="test-key")
+        raw = _valid_classification_json(category="Informative", priority="Medium")
+        result = agent.validate_result(raw, long_urgent_email)
+        assert result.requires_summary is True
+
+    def test_urgent_short_body_no_summary(self, mock_gemini, sample_email):
+        """Urgent + body < 200 words => requires_summary=False."""
+        agent = ClassifierAgent(api_key="test-key")
+        raw = _valid_classification_json(category="Urgent", priority="High")
+        result = agent.validate_result(raw, sample_email)
+        assert result.requires_summary is False
+
+    def test_promotional_long_body_no_summary(self, mock_gemini, long_urgent_email):
+        """Promotional + body > 200 words => requires_summary=False (wrong category)."""
+        agent = ClassifierAgent(api_key="test-key")
+        raw = _valid_classification_json(category="Promotional", priority="Low")
+        result = agent.validate_result(raw, long_urgent_email)
+        assert result.requires_summary is False
+
+    def test_personal_long_body_no_summary(self, mock_gemini, long_urgent_email):
+        """Personal + body > 200 words => requires_summary=False (not in summary categories)."""
+        agent = ClassifierAgent(api_key="test-key")
+        raw = _valid_classification_json(category="Personal", priority="High")
+        result = agent.validate_result(raw, long_urgent_email)
+        assert result.requires_summary is False
 
 
 class TestClassify:
     """Tests for the main classify method."""
 
     @pytest.mark.asyncio
-    async def test_classify_empty_email(self, mock_openai, empty_email):
-        """Test empty email returns default classification."""
+    async def test_classify_empty_email(self, mock_gemini, empty_email):
+        """Test empty email returns default classification without calling LLM."""
+        _, mock_model = mock_gemini
         agent = ClassifierAgent(api_key="test-key")
         result = await agent.classify(empty_email)
 
@@ -221,12 +337,15 @@ class TestClassify:
         assert result.requires_response is False
         assert result.requires_summary is False
 
+        # Verify LLM was NOT called for empty emails
+        mock_model.generate_content_async.assert_not_called()
+
     @pytest.mark.asyncio
-    async def test_classify_success(self, mock_openai, sample_email):
-        """Test successful classification via OpenAI."""
-        _, mock_client = mock_openai
-        mock_client.chat.completions.create = AsyncMock(
-            return_value=_make_openai_response(_valid_classification_json())
+    async def test_classify_success(self, mock_gemini, sample_email):
+        """Test successful classification via Gemini."""
+        _, mock_model = mock_gemini
+        mock_model.generate_content_async = AsyncMock(
+            return_value=_make_gemini_response(_valid_classification_json())
         )
 
         agent = ClassifierAgent(api_key="test-key")
@@ -234,17 +353,37 @@ class TestClassify:
 
         assert result.category == EmailCategory.URGENT
         assert result.priority == PriorityLevel.HIGH
+        assert result.requires_response is True  # Urgent + High
+        assert result.requires_summary is False  # Body < 200 words
 
     @pytest.mark.asyncio
-    async def test_classify_timeout_raises_error(self, mock_openai, sample_email):
+    async def test_classify_personal_medium(self, mock_gemini, short_personal_email):
+        """Test Personal + Medium triggers requires_response."""
+        _, mock_model = mock_gemini
+        mock_model.generate_content_async = AsyncMock(
+            return_value=_make_gemini_response(
+                _valid_classification_json(category="Personal", priority="Medium", confidence=0.85)
+            )
+        )
+
+        agent = ClassifierAgent(api_key="test-key")
+        result = await agent.classify(short_personal_email)
+
+        assert result.category == EmailCategory.PERSONAL
+        assert result.priority == PriorityLevel.MEDIUM
+        assert result.requires_response is True
+        assert result.requires_summary is False  # Body < 200 words
+
+    @pytest.mark.asyncio
+    async def test_classify_timeout_raises_error(self, mock_gemini, sample_email):
         """Test timeout raises ClassificationError."""
-        _, mock_client = mock_openai
+        _, mock_model = mock_gemini
 
         async def slow_response(*args, **kwargs):
             await asyncio.sleep(20)
-            return _make_openai_response(_valid_classification_json())
+            return _make_gemini_response(_valid_classification_json())
 
-        mock_client.chat.completions.create = slow_response
+        mock_model.generate_content_async = slow_response
 
         agent = ClassifierAgent(api_key="test-key", timeout=1)
 
@@ -253,15 +392,63 @@ class TestClassify:
 
     @pytest.mark.asyncio
     async def test_classify_api_error_raises_classification_error(
-        self, mock_openai, sample_email
+        self, mock_gemini, sample_email
     ):
-        """Test OpenAI API error is wrapped in ClassificationError."""
-        _, mock_client = mock_openai
-        mock_client.chat.completions.create = AsyncMock(
+        """Test Gemini API error is wrapped in ClassificationError."""
+        _, mock_model = mock_gemini
+        mock_model.generate_content_async = AsyncMock(
             side_effect=RuntimeError("API unavailable")
         )
 
         agent = ClassifierAgent(api_key="test-key")
 
-        with pytest.raises(ClassificationError, match="OpenAI API call failed"):
+        with pytest.raises(ClassificationError, match="Gemini API call failed"):
             await agent.classify(sample_email)
+
+    @pytest.mark.asyncio
+    async def test_classify_empty_response_raises_error(
+        self, mock_gemini, sample_email
+    ):
+        """Test that an empty Gemini response raises ClassificationError."""
+        _, mock_model = mock_gemini
+        empty_response = MagicMock()
+        empty_response.text = None
+        mock_model.generate_content_async = AsyncMock(return_value=empty_response)
+
+        agent = ClassifierAgent(api_key="test-key")
+
+        with pytest.raises(ClassificationError, match="Gemini returned empty response"):
+            await agent.classify(sample_email)
+
+    @pytest.mark.asyncio
+    async def test_classify_low_confidence_flags_review(self, mock_gemini, sample_email):
+        """Test low confidence result is flagged for review."""
+        _, mock_model = mock_gemini
+        mock_model.generate_content_async = AsyncMock(
+            return_value=_make_gemini_response(
+                _valid_classification_json(confidence=0.3)
+            )
+        )
+
+        agent = ClassifierAgent(api_key="test-key")
+        result = await agent.classify(sample_email)
+
+        assert result.flagged_for_review is True
+        assert result.confidence == 0.3
+
+    @pytest.mark.asyncio
+    async def test_classify_long_urgent_email(self, mock_gemini, long_urgent_email):
+        """Test classification of long urgent email sets requires_summary=True."""
+        _, mock_model = mock_gemini
+        mock_model.generate_content_async = AsyncMock(
+            return_value=_make_gemini_response(
+                _valid_classification_json(category="Urgent", priority="High", confidence=0.95)
+            )
+        )
+
+        agent = ClassifierAgent(api_key="test-key")
+        result = await agent.classify(long_urgent_email)
+
+        assert result.category == EmailCategory.URGENT
+        assert result.requires_response is True
+        assert result.requires_summary is True  # Body > 200 words + Urgent category

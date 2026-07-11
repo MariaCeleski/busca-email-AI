@@ -2,27 +2,45 @@
 
 Provides:
 - GET /api/v1/emails — paginated list with filters
-- GET /api/v1/emails/review — emails flagged for manual review
-- GET /api/v1/emails/{email_id} — full processing result
+- GET /api/v1/emails/review — emails flagged for manual review (confidence < 0.75)
+- GET /api/v1/emails/{email_id} — full processing result (with draft reply if present)
 - POST /api/v1/emails/{email_id}/reply/approve — approve and send draft
 - POST /api/v1/emails/{email_id}/reply/reject — reject draft
+
+Validates: Requirements 8.1, 8.2, 8.8, 7.1, 7.2, 7.8
 """
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import math
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
+from src.models.auth import ApprovedReply, SendResult
 from src.models.database import get_session
+from src.models.orm import ConnectedAccount as ConnectedAccountORM
+from src.models.orm import DraftReply as DraftReplyORM
+from src.models.orm import ProcessedEmail
 from src.models.repositories import DraftReplyRepository, ProcessedEmailRepository
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api/v1/emails", tags=["emails"])
+
+# Maximum time allowed for the send operation (seconds)
+_SEND_TIMEOUT_SECONDS = 30
+
+# Confidence threshold for review flagging (Requirement 7.8)
+REVIEW_CONFIDENCE_THRESHOLD = 0.75
 
 
 # --- Request/Response models ---
@@ -55,8 +73,32 @@ class AcknowledgmentResponse(BaseModel):
 # --- Helper to build email result dict ---
 
 
-def _email_to_dict(email) -> dict:
-    """Convert a ProcessedEmail ORM object to an API response dict."""
+def _draft_to_dict(draft: DraftReplyORM) -> dict:
+    """Convert a DraftReply ORM object to an API response dict."""
+    return {
+        "draft_id": str(draft.id),
+        "reply_body": draft.reply_body,
+        "suggested_subject": draft.suggested_subject,
+        "referenced_email_ids": draft.referenced_email_ids or [],
+        "status": draft.status,
+        "generated_at": draft.generated_at.isoformat() if draft.generated_at else None,
+        "actioned_at": draft.actioned_at.isoformat() if draft.actioned_at else None,
+        "edited_body": draft.edited_body,
+        "edited_subject": draft.edited_subject,
+        "send_error": draft.send_error,
+    }
+
+
+def _email_to_dict(email: ProcessedEmail, draft: DraftReplyORM | None = None) -> dict:
+    """Convert a ProcessedEmail ORM object to an API response dict.
+
+    Args:
+        email: The ProcessedEmail ORM instance.
+        draft: Optional DraftReply ORM instance to include in the response.
+
+    Returns:
+        Dictionary representation of the email processing result.
+    """
     return {
         "email_id": str(email.id),
         "provider_message_id": email.provider_message_id,
@@ -81,7 +123,7 @@ def _email_to_dict(email) -> dict:
         }
         if email.summary
         else None,
-        "draft_reply": None,  # Populated separately if needed
+        "draft_reply": _draft_to_dict(draft) if draft else None,
         "workflow_stage": email.workflow_stage,
         "flagged_for_review": email.flagged_for_review,
     }
@@ -97,27 +139,30 @@ async def list_emails_for_review(
     page_size: int = Query(20, ge=1, le=100),
     session: AsyncSession = Depends(get_session),
 ):
-    """List emails flagged for manual review."""
-    # Use a placeholder user_id for now (single-user system)
-    repo = ProcessedEmailRepository(session)
+    """List emails flagged for manual review.
+
+    Returns emails where confidence < 0.75 OR flagged_for_review is True,
+    sorted by processing_timestamp descending (Requirement 7.8).
+    """
     offset = (page - 1) * page_size
 
-    # For now, query all flagged emails (no user filter for single-user mode)
-    from sqlalchemy import func, select
-
-    from src.models.orm import ProcessedEmail
+    # Filter: flagged_for_review=True OR confidence < 0.75
+    review_filter = or_(
+        ProcessedEmail.flagged_for_review == True,  # noqa: E712
+        ProcessedEmail.confidence < REVIEW_CONFIDENCE_THRESHOLD,
+    )
 
     count_stmt = (
         select(func.count())
         .select_from(ProcessedEmail)
-        .where(ProcessedEmail.flagged_for_review == True)  # noqa: E712
+        .where(review_filter)
     )
     count_result = await session.execute(count_stmt)
     total = count_result.scalar_one()
 
     stmt = (
         select(ProcessedEmail)
-        .where(ProcessedEmail.flagged_for_review == True)  # noqa: E712
+        .where(review_filter)
         .order_by(ProcessedEmail.processing_timestamp.desc())
         .offset(offset)
         .limit(page_size)
@@ -150,43 +195,40 @@ async def list_emails(
 
     Sorted by processing_timestamp descending.
     Default page_size=20, max=100.
+
+    Filters:
+    - category: Filter by email category (Urgent, Informative, etc.)
+    - priority: Filter by priority level (High, Medium, Low)
+    - date_from: Filter emails processed on or after this timestamp
+    - date_to: Filter emails processed on or before this timestamp
     """
-    from sqlalchemy import func, select
-
-    from src.models.orm import ProcessedEmail
-
     offset = (page - 1) * page_size
 
-    # Build count query
-    count_stmt = select(func.count()).select_from(ProcessedEmail)
+    # Build base filter conditions
+    conditions = []
     if category:
-        count_stmt = count_stmt.where(ProcessedEmail.category == category)
+        conditions.append(ProcessedEmail.category == category)
     if priority:
-        count_stmt = count_stmt.where(ProcessedEmail.priority == priority)
+        conditions.append(ProcessedEmail.priority == priority)
     if date_from:
-        count_stmt = count_stmt.where(
-            ProcessedEmail.processing_timestamp >= date_from
-        )
+        conditions.append(ProcessedEmail.processing_timestamp >= date_from)
     if date_to:
-        count_stmt = count_stmt.where(
-            ProcessedEmail.processing_timestamp <= date_to
-        )
+        conditions.append(ProcessedEmail.processing_timestamp <= date_to)
+
+    # Count query
+    count_stmt = select(func.count()).select_from(ProcessedEmail)
+    for cond in conditions:
+        count_stmt = count_stmt.where(cond)
 
     count_result = await session.execute(count_stmt)
     total = count_result.scalar_one()
 
-    # Build data query
+    # Data query
     stmt = select(ProcessedEmail).order_by(
         ProcessedEmail.processing_timestamp.desc()
     )
-    if category:
-        stmt = stmt.where(ProcessedEmail.category == category)
-    if priority:
-        stmt = stmt.where(ProcessedEmail.priority == priority)
-    if date_from:
-        stmt = stmt.where(ProcessedEmail.processing_timestamp >= date_from)
-    if date_to:
-        stmt = stmt.where(ProcessedEmail.processing_timestamp <= date_to)
+    for cond in conditions:
+        stmt = stmt.where(cond)
 
     stmt = stmt.offset(offset).limit(page_size)
     result = await session.execute(stmt)
@@ -208,19 +250,30 @@ async def get_email(
     email_id: uuid.UUID,
     session: AsyncSession = Depends(get_session),
 ):
-    """Get full processing result for a specific email."""
-    from sqlalchemy import select
+    """Get full processing result for a specific email.
 
-    from src.models.orm import ProcessedEmail
-
-    stmt = select(ProcessedEmail).where(ProcessedEmail.id == email_id)
+    Joins with draft_replies to include the draft reply if one exists.
+    Returns 404 if the email ID does not exist.
+    """
+    # Use selectinload to eagerly load draft_replies relationship
+    stmt = (
+        select(ProcessedEmail)
+        .options(selectinload(ProcessedEmail.draft_replies))
+        .where(ProcessedEmail.id == email_id)
+    )
     result = await session.execute(stmt)
     email = result.scalar_one_or_none()
 
     if email is None:
-        raise HTTPException(status_code=404, detail="Email not found")
+        raise HTTPException(
+            status_code=404,
+            detail=f"Email with id '{email_id}' not found",
+        )
 
-    return _email_to_dict(email)
+    # Get the first draft reply if any exist (typically one per email)
+    draft = email.draft_replies[0] if email.draft_replies else None
+
+    return _email_to_dict(email, draft=draft)
 
 
 @router.post("/{email_id}/reply/approve")
@@ -229,10 +282,20 @@ async def approve_reply(
     body: ReplyActionRequest = None,
     session: AsyncSession = Depends(get_session),
 ):
-    """Approve and send a draft reply.
+    """Approve and send a draft reply via the email provider.
+
+    On approval:
+    1. Validates draft exists and is in 'pending' or 'send_failed' state
+    2. Updates status to 'approved' with optional edited body/subject
+    3. Attempts to send via the email provider (within 30s timeout)
+    4. On send success: updates status to 'sent'
+    5. On send failure: updates status to 'send_failed', retains draft, stores error
 
     Returns 404 if no draft exists for the email.
-    Returns 409 if the draft has already been actioned.
+    Returns 409 if the draft has already been actioned (approved/sent/rejected)
+        but NOT for send_failed (which allows retry).
+
+    Validates: Requirements 8.3, 8.9, 7.4, 7.5, 7.6, 7.7, 7.9
     """
     draft_repo = DraftReplyRepository(session)
     draft = await draft_repo.get_by_email_id(email_id)
@@ -240,23 +303,166 @@ async def approve_reply(
     if draft is None:
         raise HTTPException(status_code=404, detail="Draft reply not found")
 
-    if draft.status != "pending":
+    # Allow retry for send_failed drafts; reject already-actioned ones
+    if draft.status not in ("pending", "send_failed"):
         raise HTTPException(
             status_code=409,
             detail=f"Draft already actioned with status: {draft.status}",
         )
 
-    # Update draft status
+    # Apply edits if provided
+    now = datetime.now(timezone.utc)
     draft.status = "approved"
-    draft.actioned_at = datetime.utcnow()
+    draft.actioned_at = now
+    draft.send_error = None  # Clear previous error on retry
     if body and body.edited_body:
         draft.edited_body = body.edited_body
     if body and body.edited_subject:
         draft.edited_subject = body.edited_subject
 
-    await session.commit()
+    await session.flush()
 
-    return {"status": "approved", "email_id": str(email_id), "draft_id": str(draft.id)}
+    # Look up the associated email for provider/sender info
+    email_repo = ProcessedEmailRepository(session)
+    email = await email_repo.get_by_id(email_id)
+
+    if email is None:
+        raise HTTPException(status_code=404, detail="Email not found")
+
+    # Attempt to send the reply via the email provider
+    send_result = await _attempt_send(session, email, draft)
+
+    if send_result.success:
+        draft.status = "sent"
+        await session.commit()
+        return {
+            "status": "sent",
+            "email_id": str(email_id),
+            "draft_id": str(draft.id),
+            "message": "Reply sent successfully",
+        }
+    else:
+        # Send failed — retain draft, store error, allow retry
+        draft.status = "send_failed"
+        draft.send_error = send_result.error or "Unknown send failure"
+        await session.commit()
+        return {
+            "status": "send_failed",
+            "email_id": str(email_id),
+            "draft_id": str(draft.id),
+            "error": draft.send_error,
+            "message": "Send failed. Draft retained for retry.",
+        }
+
+
+async def _get_provider_client(session: AsyncSession, email: ProcessedEmail):
+    """Get the email provider client for the email's user and provider.
+
+    Args:
+        session: The database session.
+        email: The ProcessedEmail instance.
+
+    Returns:
+        An EmailProviderClient instance, or None if no connected account found.
+    """
+    # Find the connected account for this user/provider
+    stmt = (
+        select(ConnectedAccountORM)
+        .where(
+            ConnectedAccountORM.user_id == email.user_id,
+            ConnectedAccountORM.provider == email.provider,
+            ConnectedAccountORM.status == "connected",
+        )
+        .limit(1)
+    )
+    result = await session.execute(stmt)
+    account = result.scalar_one_or_none()
+
+    if account is None:
+        return None
+
+    if email.provider == "gmail":
+        from src.providers.gmail import GmailClient
+
+        return GmailClient(
+            access_token=account.encrypted_access_token.decode()
+            if isinstance(account.encrypted_access_token, bytes)
+            else (account.encrypted_access_token or ""),
+            refresh_token=account.encrypted_refresh_token.decode()
+            if isinstance(account.encrypted_refresh_token, bytes)
+            else account.encrypted_refresh_token,
+        )
+    elif email.provider == "microsoft":
+        from src.providers.microsoft import MicrosoftGraphClient
+
+        return MicrosoftGraphClient(
+            access_token=account.encrypted_access_token.decode()
+            if isinstance(account.encrypted_access_token, bytes)
+            else (account.encrypted_access_token or ""),
+            refresh_token=account.encrypted_refresh_token.decode()
+            if isinstance(account.encrypted_refresh_token, bytes)
+            else account.encrypted_refresh_token,
+        )
+
+    return None
+
+
+async def _attempt_send(
+    session: AsyncSession, email: ProcessedEmail, draft: DraftReplyORM
+):
+    """Attempt to send the approved reply via the email provider.
+
+    Uses the edited body/subject if provided, otherwise falls back to the
+    original draft body/subject. Enforces a 30-second timeout.
+
+    Args:
+        session: The database session.
+        email: The ProcessedEmail ORM instance.
+        draft: The DraftReply ORM instance.
+
+    Returns:
+        A SendResult indicating success or failure.
+    """
+    # Build the reply content (prefer edited versions)
+    reply_body = draft.edited_body or draft.reply_body
+    reply_subject = draft.edited_subject or draft.suggested_subject or ""
+
+    # Build the ApprovedReply payload
+    approved_reply = ApprovedReply(
+        email_id=str(email.id),
+        to_address=email.sender,
+        subject=reply_subject,
+        body=reply_body,
+        thread_id=email.thread_id,
+        in_reply_to=email.provider_message_id,
+    )
+
+    # Get the provider client
+    try:
+        provider_client = await _get_provider_client(session, email)
+    except Exception as exc:
+        logger.error("Failed to get provider client: %s", exc)
+        return SendResult(success=False, error=f"Provider client error: {str(exc)}")
+
+    if provider_client is None:
+        return SendResult(
+            success=False,
+            error="No connected email account found for sending",
+        )
+
+    # Attempt send with timeout
+    try:
+        send_result = await asyncio.wait_for(
+            provider_client.send_reply(approved_reply),
+            timeout=_SEND_TIMEOUT_SECONDS,
+        )
+        return send_result
+    except asyncio.TimeoutError:
+        logger.error("Send timed out for email %s", email.id)
+        return SendResult(success=False, error="Send operation timed out (30s)")
+    except Exception as exc:
+        logger.error("Send failed for email %s: %s", email.id, exc)
+        return SendResult(success=False, error=str(exc))
 
 
 @router.post("/{email_id}/reply/reject")
@@ -269,6 +475,8 @@ async def reject_reply(
 
     Returns 404 if no draft exists for the email.
     Returns 409 if the draft has already been actioned.
+
+    Validates: Requirements 8.3, 8.9, 7.7
     """
     draft_repo = DraftReplyRepository(session)
     draft = await draft_repo.get_by_email_id(email_id)
@@ -276,15 +484,21 @@ async def reject_reply(
     if draft is None:
         raise HTTPException(status_code=404, detail="Draft reply not found")
 
-    if draft.status != "pending":
+    if draft.status not in ("pending", "send_failed"):
         raise HTTPException(
             status_code=409,
             detail=f"Draft already actioned with status: {draft.status}",
         )
 
-    # Update draft status
+    # Update draft status to rejected
     draft.status = "rejected"
-    draft.actioned_at = datetime.utcnow()
+    draft.actioned_at = datetime.now(timezone.utc)
+
+    # Mark the email as requiring manual response (Requirement 7.7)
+    email_repo = ProcessedEmailRepository(session)
+    email = await email_repo.get_by_id(email_id)
+    if email is not None:
+        email.workflow_stage = "manual_review"
 
     await session.commit()
 
@@ -292,4 +506,5 @@ async def reject_reply(
         "status": "rejected",
         "email_id": str(email_id),
         "draft_id": str(draft.id),
+        "message": "Draft rejected. Email marked for manual response.",
     }

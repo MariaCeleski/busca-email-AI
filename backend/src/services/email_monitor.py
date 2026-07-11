@@ -4,8 +4,12 @@ Provides:
 - Periodic polling of email providers for new unread messages
 - Webhook handling for push-based notifications
 - Deduplication via provider_message_id in PostgreSQL
-- Auth token refresh with retry logic
-- Connectivity failure handling with exponential backoff
+- Auth token refresh with retry logic (3 retries, 5s delay)
+- Connectivity failure handling with exponential backoff (2s base, 3 retries)
+- Suspension of polling after auth retry exhaustion with user notification
+- Celery task enqueueing for background processing
+
+Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7
 """
 
 from __future__ import annotations
@@ -14,7 +18,7 @@ import asyncio
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -37,14 +41,24 @@ class ProviderAPIError(Exception):
     pass
 
 
+class WebhookPayload:
+    """Represents a webhook notification payload from an email provider."""
+
+    def __init__(self, data: Dict[str, Any]) -> None:
+        self.data = data
+        self.received_at: datetime = datetime.now(timezone.utc)
+
+
 class EmailMonitor:
     """Monitors email providers for new messages via polling or webhooks.
 
     Handles:
-    - Configurable polling interval (minimum 10s)
-    - Deduplication of already-processed emails
+    - Configurable polling interval (minimum 10s, default 60s)
+    - Deduplication of already-processed emails via provider_message_id
     - Auth token refresh retries (up to 3 attempts, 5s delay)
     - Connectivity retry with exponential backoff (base 2s, up to 3 retries)
+    - Webhook handling within 5s timeout
+    - Celery task enqueueing for background email processing
     """
 
     # Auth retry configuration
@@ -62,15 +76,30 @@ class EmailMonitor:
         self,
         session: AsyncSession,
         provider_client: EmailProviderClient,
+        user_id: Optional[uuid.UUID] = None,
+        enqueue_task: Optional[Callable[[Dict[str, Any]], str]] = None,
+        on_auth_suspended: Optional[Callable[[str, str], None]] = None,
     ) -> None:
         """Initialize EmailMonitor.
 
         Args:
             session: Async SQLAlchemy session for database operations.
             provider_client: Email provider client for fetching emails.
+            user_id: UUID of the user whose emails are being monitored.
+            enqueue_task: Optional callable to enqueue emails for processing
+                (e.g., Celery task.delay). If not provided, uses a default
+                that generates a UUID task ID without background processing.
+            on_auth_suspended: Optional callback invoked when auth retries are
+                exhausted and polling is suspended. Called with (provider_name,
+                timestamp) to notify the user that re-authorization is required.
+                This can be connected to WebSocket notifications, email alerts,
+                or any other user notification mechanism.
         """
         self._session = session
         self._provider_client = provider_client
+        self._user_id = user_id
+        self._enqueue_task = enqueue_task
+        self._on_auth_suspended = on_auth_suspended
         self._polling_task: Optional[asyncio.Task] = None
         self._is_polling: bool = False
         self._auth_suspended: bool = False
@@ -121,11 +150,14 @@ class EmailMonitor:
             self._polling_task = None
         logger.info("Email polling stopped")
 
-    async def handle_webhook(self, payload: dict) -> None:
+    async def handle_webhook(self, payload: dict | WebhookPayload) -> None:
         """Process incoming webhook notification within 5s timeout.
 
+        Fetches the referenced email from the provider and enqueues it
+        for processing. Must complete within 5 seconds of notification receipt.
+
         Args:
-            payload: Webhook payload from the email provider.
+            payload: Webhook payload from the email provider (dict or WebhookPayload).
 
         Raises:
             asyncio.TimeoutError: If processing exceeds 5 seconds.
@@ -135,8 +167,12 @@ class EmailMonitor:
             timeout=self.WEBHOOK_TIMEOUT_SECONDS,
         )
 
-    async def _process_webhook(self, payload: dict) -> None:
-        """Internal webhook processing logic."""
+    async def _process_webhook(self, payload: dict | WebhookPayload) -> None:
+        """Internal webhook processing logic.
+
+        Fetches unread emails from the provider and enqueues each
+        non-duplicate for processing.
+        """
         emails = await self.fetch_emails(self._provider_client)
         for email in emails:
             await self.enqueue_email(email)
@@ -159,6 +195,10 @@ class EmailMonitor:
     async def enqueue_email(self, email: RawEmail) -> Optional[str]:
         """Deduplicate and enqueue email for processing.
 
+        Checks deduplication via provider_message_id (in-memory cache + PostgreSQL),
+        then persists the email record and dispatches a Celery task for background
+        processing through the agent pipeline.
+
         Args:
             email: The raw email to enqueue.
 
@@ -171,13 +211,19 @@ class EmailMonitor:
             )
             return None
 
-        # Mark as processed
+        # Mark as processed in local cache
         self._processed_message_ids.add(email.provider_message_id)
 
-        # Also persist to database for cross-instance deduplication
+        # Persist to database for cross-instance deduplication
         await self._persist_processed_email(email)
 
-        task_id = str(uuid.uuid4())
+        # Enqueue for background processing via Celery (or fallback)
+        email_data = email.model_dump(mode="json")
+        if self._enqueue_task is not None:
+            task_id = self._enqueue_task(email_data)
+        else:
+            task_id = str(uuid.uuid4())
+
         logger.info(
             "Email enqueued: message_id=%s, task_id=%s, sender=%s, subject=%s",
             email.provider_message_id,
@@ -359,12 +405,43 @@ class EmailMonitor:
             provider_name,
             timestamp,
         )
+        # Notify user that re-authorization is required (Requirement 1.5)
+        self._notify_auth_suspended(provider_name, timestamp)
         raise ProviderAuthError(
             f"Token refresh failed after {self.AUTH_MAX_RETRIES} attempts"
         )
 
+    def _notify_auth_suspended(self, provider_name: str, timestamp: str) -> None:
+        """Notify the user that re-authorization is required.
+
+        Invokes the on_auth_suspended callback if one was provided during
+        initialization. This allows the system to notify the user via
+        WebSocket, email, or other mechanisms that polling has been
+        suspended and they must re-authenticate.
+
+        Args:
+            provider_name: Name of the provider that failed authentication.
+            timestamp: ISO timestamp of when the failure occurred.
+        """
+        if self._on_auth_suspended is not None:
+            try:
+                self._on_auth_suspended(provider_name, timestamp)
+            except Exception as e:
+                logger.warning(
+                    "Failed to send auth suspension notification: %s", str(e)
+                )
+        logger.info(
+            "User notification: Re-authorization required for provider=%s. "
+            "Polling suspended at timestamp=%s",
+            provider_name,
+            timestamp,
+        )
+
     async def _persist_processed_email(self, email: RawEmail) -> None:
         """Persist processed email record to the database.
+
+        Stores the email in the processed_emails table for deduplication
+        and later retrieval by the agent pipeline.
 
         Args:
             email: The raw email that was processed.
@@ -373,15 +450,30 @@ class EmailMonitor:
             from src.models.repositories import ProcessedEmailRepository
 
             repo = ProcessedEmailRepository(self._session)
-            await repo.create(
-                provider_message_id=email.provider_message_id,
-                sender=email.sender,
-                subject=email.subject,
-                body_snippet=email.body[:500] if email.body else "",
-                provider=email.provider,
-                received_at=email.timestamp,
-                processing_timestamp=datetime.now(timezone.utc),
-            )
+            attachments_data = [
+                {
+                    "file_name": att.file_name,
+                    "file_size": att.file_size,
+                    "mime_type": att.mime_type,
+                }
+                for att in email.attachments
+            ]
+            kwargs = {
+                "provider_message_id": email.provider_message_id,
+                "sender": email.sender,
+                "subject": email.subject,
+                "body": email.body,
+                "timestamp": email.timestamp,
+                "attachments": attachments_data,
+                "thread_id": email.thread_id,
+                "provider": email.provider,
+                "processing_timestamp": datetime.now(timezone.utc),
+                "workflow_stage": "queued",
+            }
+            if self._user_id is not None:
+                kwargs["user_id"] = self._user_id
+            await repo.create(**kwargs)
+            await self._session.commit()
         except Exception as e:
             logger.warning(
                 "Failed to persist processed email record: %s", str(e)

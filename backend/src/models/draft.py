@@ -11,7 +11,7 @@ from .enums import DraftStatus
 class DraftReply(BaseModel):
     """A generated draft reply from the Response Agent."""
 
-    reply_body: str
+    reply_body: str = Field(max_length=2500)
     suggested_subject: str = Field(max_length=150)
     referenced_email_ids: list[str] = []
     status: DraftStatus = DraftStatus.PENDING

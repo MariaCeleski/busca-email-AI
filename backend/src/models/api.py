@@ -49,5 +49,6 @@ class FieldError(BaseModel):
 class ErrorResponse(BaseModel):
     """Standard error response for API errors."""
 
+    error: str
     detail: str
-    errors: list[FieldError] = []
+    field_errors: Optional[list[FieldError]] = None

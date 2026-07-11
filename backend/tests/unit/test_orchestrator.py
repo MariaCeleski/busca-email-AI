@@ -12,6 +12,7 @@ from src.agents.orchestrator import (
     AgentOrchestrator,
     EmailWorkflowState,
     route_after_classification,
+    route_after_summarize,
 )
 from src.models.classification import ClassificationResult
 from src.models.draft import DraftReply
@@ -127,8 +128,8 @@ def _make_draft() -> DraftReply:
 class TestRouteAfterClassification:
     """Test the route_after_classification function."""
 
-    def test_low_confidence_routes_to_publish_results(self, sample_email: RawEmail):
-        """Low confidence (< 0.6) → flagged for manual review → publish_results."""
+    def test_low_confidence_routes_to_manual_review(self, sample_email: RawEmail):
+        """Low confidence (< 0.6) → flagged for manual review → manual_review."""
         state: EmailWorkflowState = {
             "email": sample_email,
             "classification": _make_classification(confidence=0.4),
@@ -138,8 +139,9 @@ class TestRouteAfterClassification:
             "current_stage": "classifying",
             "error": None,
             "flagged_for_review": True,
+            "needs_dual_path": False,
         }
-        assert route_after_classification(state) == "publish_results"
+        assert route_after_classification(state) == "manual_review"
 
     def test_urgent_high_priority_short_body_routes_to_generate_response(
         self, short_email: RawEmail
@@ -156,6 +158,7 @@ class TestRouteAfterClassification:
             "current_stage": "classifying",
             "error": None,
             "flagged_for_review": False,
+            "needs_dual_path": False,
         }
         assert route_after_classification(state) == "generate_response"
 
@@ -174,11 +177,12 @@ class TestRouteAfterClassification:
             "current_stage": "classifying",
             "error": None,
             "flagged_for_review": False,
+            "needs_dual_path": False,
         }
         assert route_after_classification(state) == "generate_response"
 
     def test_urgent_high_long_body_routes_to_summarize(self, sample_email: RawEmail):
-        """Urgent + High priority + body > 200 words → summarize first."""
+        """Urgent + High priority + body > 200 words → summarize first (dual path)."""
         state: EmailWorkflowState = {
             "email": sample_email,
             "classification": _make_classification(
@@ -190,6 +194,7 @@ class TestRouteAfterClassification:
             "current_stage": "classifying",
             "error": None,
             "flagged_for_review": False,
+            "needs_dual_path": True,
         }
         assert route_after_classification(state) == "summarize"
 
@@ -206,11 +211,12 @@ class TestRouteAfterClassification:
             "current_stage": "classifying",
             "error": None,
             "flagged_for_review": False,
+            "needs_dual_path": False,
         }
         assert route_after_classification(state) == "summarize"
 
-    def test_no_classification_routes_to_publish_results(self, sample_email: RawEmail):
-        """No classification → publish_results."""
+    def test_no_classification_routes_to_manual_review(self, sample_email: RawEmail):
+        """No classification → manual_review."""
         state: EmailWorkflowState = {
             "email": sample_email,
             "classification": None,
@@ -220,8 +226,78 @@ class TestRouteAfterClassification:
             "current_stage": "classifying",
             "error": None,
             "flagged_for_review": False,
+            "needs_dual_path": False,
         }
-        assert route_after_classification(state) == "publish_results"
+        assert route_after_classification(state) == "manual_review"
+
+    def test_spam_routes_to_summarize(self, sample_email: RawEmail):
+        """Spam category → summarize."""
+        state: EmailWorkflowState = {
+            "email": sample_email,
+            "classification": _make_classification(
+                category=EmailCategory.SPAM, priority=PriorityLevel.LOW
+            ),
+            "summary": None,
+            "draft_reply": None,
+            "retry_counts": {},
+            "current_stage": "classifying",
+            "error": None,
+            "flagged_for_review": False,
+            "needs_dual_path": False,
+        }
+        assert route_after_classification(state) == "summarize"
+
+    def test_promotional_routes_to_summarize(self, short_email: RawEmail):
+        """Promotional category → summarize."""
+        state: EmailWorkflowState = {
+            "email": short_email,
+            "classification": _make_classification(
+                category=EmailCategory.PROMOTIONAL, priority=PriorityLevel.MEDIUM
+            ),
+            "summary": None,
+            "draft_reply": None,
+            "retry_counts": {},
+            "current_stage": "classifying",
+            "error": None,
+            "flagged_for_review": False,
+            "needs_dual_path": False,
+        }
+        assert route_after_classification(state) == "summarize"
+
+    def test_transactional_routes_to_summarize(self, short_email: RawEmail):
+        """Transactional category → summarize."""
+        state: EmailWorkflowState = {
+            "email": short_email,
+            "classification": _make_classification(
+                category=EmailCategory.TRANSACTIONAL, priority=PriorityLevel.HIGH
+            ),
+            "summary": None,
+            "draft_reply": None,
+            "retry_counts": {},
+            "current_stage": "classifying",
+            "error": None,
+            "flagged_for_review": False,
+            "needs_dual_path": False,
+        }
+        assert route_after_classification(state) == "summarize"
+
+    def test_urgent_low_priority_routes_to_summarize(self, sample_email: RawEmail):
+        """Urgent + Low priority → summarize (priority Low overrides category)."""
+        state: EmailWorkflowState = {
+            "email": sample_email,
+            "classification": _make_classification(
+                category=EmailCategory.URGENT, priority=PriorityLevel.LOW
+            ),
+            "summary": None,
+            "draft_reply": None,
+            "retry_counts": {},
+            "current_stage": "classifying",
+            "error": None,
+            "flagged_for_review": False,
+            "needs_dual_path": False,
+        }
+        # Urgent + Low → falls through to default "summarize"
+        assert route_after_classification(state) == "summarize"
 
 
 # --- Test orchestrator process_email ---
@@ -535,3 +611,250 @@ class TestHandleAgentFailure:
 
         assert result["current_stage"] == WorkflowStage.FAILED.value
         assert "classifier" in result["error"]
+
+
+# --- Test route_after_summarize ---
+
+
+class TestRouteAfterSummarize:
+    """Test the route_after_summarize function."""
+
+    def test_dual_path_routes_to_generate_response(self, sample_email: RawEmail):
+        """When needs_dual_path is True → generate_response after summarize."""
+        state: EmailWorkflowState = {
+            "email": sample_email,
+            "classification": _make_classification(
+                category=EmailCategory.URGENT, priority=PriorityLevel.HIGH
+            ),
+            "summary": _make_summary(),
+            "draft_reply": None,
+            "retry_counts": {},
+            "current_stage": "summarizing",
+            "error": None,
+            "flagged_for_review": False,
+            "needs_dual_path": True,
+        }
+        assert route_after_summarize(state) == "generate_response"
+
+    def test_no_dual_path_routes_to_publish_results(self, sample_email: RawEmail):
+        """When needs_dual_path is False → publish_results after summarize."""
+        state: EmailWorkflowState = {
+            "email": sample_email,
+            "classification": _make_classification(
+                category=EmailCategory.INFORMATIVE, priority=PriorityLevel.LOW
+            ),
+            "summary": _make_summary(),
+            "draft_reply": None,
+            "retry_counts": {},
+            "current_stage": "summarizing",
+            "error": None,
+            "flagged_for_review": False,
+            "needs_dual_path": False,
+        }
+        assert route_after_summarize(state) == "publish_results"
+
+    def test_missing_needs_dual_path_defaults_to_publish_results(
+        self, sample_email: RawEmail
+    ):
+        """When needs_dual_path key is missing → defaults to publish_results."""
+        state: EmailWorkflowState = {
+            "email": sample_email,
+            "classification": _make_classification(
+                category=EmailCategory.INFORMATIVE, priority=PriorityLevel.LOW
+            ),
+            "summary": _make_summary(),
+            "draft_reply": None,
+            "retry_counts": {},
+            "current_stage": "summarizing",
+            "error": None,
+            "flagged_for_review": False,
+        }
+        assert route_after_summarize(state) == "publish_results"
+
+
+# --- Test dual path in orchestrator ---
+
+
+class TestDualPathProcessing:
+    """Test that Urgent emails with body > 200 words get both summarization and response."""
+
+    async def test_urgent_high_long_body_gets_both_summary_and_response(
+        self,
+        mock_classifier: AsyncMock,
+        mock_summarizer: AsyncMock,
+        mock_response_agent: AsyncMock,
+        sample_email: RawEmail,
+    ):
+        """Urgent + High + body > 200 words → BOTH summarizer AND response agent called."""
+        orchestrator = AgentOrchestrator(
+            classifier=mock_classifier,
+            summarizer=mock_summarizer,
+            response_agent=mock_response_agent,
+            max_retries=3,
+            hard_timeout=30,
+            max_concurrent=10,
+        )
+
+        classification = _make_classification(
+            category=EmailCategory.URGENT, priority=PriorityLevel.HIGH
+        )
+        mock_classifier.classify.return_value = classification
+        mock_summarizer.summarize.return_value = _make_summary()
+        mock_response_agent.generate_reply.return_value = _make_draft()
+
+        result = await orchestrator.process_email(sample_email)
+
+        # Both agents should be called
+        mock_summarizer.summarize.assert_called_once_with(sample_email)
+        mock_response_agent.generate_reply.assert_called_once_with(
+            sample_email, classification
+        )
+        # Both results should be present
+        assert result["summary"] is not None
+        assert result["draft_reply"] is not None
+        assert result["current_stage"] == WorkflowStage.COMPLETED.value
+
+    async def test_urgent_medium_long_body_gets_both_summary_and_response(
+        self,
+        mock_classifier: AsyncMock,
+        mock_summarizer: AsyncMock,
+        mock_response_agent: AsyncMock,
+        sample_email: RawEmail,
+    ):
+        """Urgent + Medium + body > 200 words → BOTH summarizer AND response agent called."""
+        orchestrator = AgentOrchestrator(
+            classifier=mock_classifier,
+            summarizer=mock_summarizer,
+            response_agent=mock_response_agent,
+            max_retries=3,
+            hard_timeout=30,
+            max_concurrent=10,
+        )
+
+        classification = _make_classification(
+            category=EmailCategory.URGENT, priority=PriorityLevel.MEDIUM
+        )
+        mock_classifier.classify.return_value = classification
+        mock_summarizer.summarize.return_value = _make_summary()
+        mock_response_agent.generate_reply.return_value = _make_draft()
+
+        result = await orchestrator.process_email(sample_email)
+
+        # Both agents should be called
+        mock_summarizer.summarize.assert_called_once_with(sample_email)
+        mock_response_agent.generate_reply.assert_called_once_with(
+            sample_email, classification
+        )
+        assert result["summary"] is not None
+        assert result["draft_reply"] is not None
+        assert result["current_stage"] == WorkflowStage.COMPLETED.value
+
+    async def test_urgent_high_short_body_gets_only_response(
+        self,
+        mock_classifier: AsyncMock,
+        mock_summarizer: AsyncMock,
+        mock_response_agent: AsyncMock,
+        short_email: RawEmail,
+    ):
+        """Urgent + High + body ≤ 200 words → only response agent, no summarizer."""
+        orchestrator = AgentOrchestrator(
+            classifier=mock_classifier,
+            summarizer=mock_summarizer,
+            response_agent=mock_response_agent,
+            max_retries=3,
+            hard_timeout=30,
+            max_concurrent=10,
+        )
+
+        classification = _make_classification(
+            category=EmailCategory.URGENT, priority=PriorityLevel.HIGH
+        )
+        mock_classifier.classify.return_value = classification
+        mock_response_agent.generate_reply.return_value = _make_draft()
+
+        result = await orchestrator.process_email(short_email)
+
+        mock_summarizer.summarize.assert_not_called()
+        mock_response_agent.generate_reply.assert_called_once()
+        assert result["summary"] is None
+        assert result["draft_reply"] is not None
+        assert result["current_stage"] == WorkflowStage.COMPLETED.value
+
+    async def test_dual_path_summarizer_failure_skips_response(
+        self,
+        mock_classifier: AsyncMock,
+        mock_summarizer: AsyncMock,
+        mock_response_agent: AsyncMock,
+        sample_email: RawEmail,
+    ):
+        """Dual path: if summarizer fails after retries, response agent still attempted."""
+        orchestrator = AgentOrchestrator(
+            classifier=mock_classifier,
+            summarizer=mock_summarizer,
+            response_agent=mock_response_agent,
+            max_retries=3,
+            hard_timeout=30,
+            max_concurrent=10,
+        )
+
+        classification = _make_classification(
+            category=EmailCategory.URGENT, priority=PriorityLevel.HIGH
+        )
+        mock_classifier.classify.return_value = classification
+        mock_summarizer.summarize.side_effect = Exception("Summarizer failed")
+
+        result = await orchestrator.process_email(sample_email)
+
+        # Summarizer should have been retried 3 times
+        assert mock_summarizer.summarize.call_count == 3
+        # When summarizer fails after retries, error is set so response is NOT called
+        assert result["current_stage"] == WorkflowStage.FAILED.value
+
+
+# --- Test build_email_workflow graph structure ---
+
+
+class TestBuildEmailWorkflow:
+    """Test that build_email_workflow constructs a valid graph."""
+
+    def test_workflow_has_expected_nodes(
+        self,
+        mock_classifier: AsyncMock,
+        mock_summarizer: AsyncMock,
+        mock_response_agent: AsyncMock,
+    ):
+        """The workflow should contain all expected nodes."""
+        from src.agents.orchestrator import build_email_workflow
+
+        workflow = build_email_workflow(
+            mock_classifier, mock_summarizer, mock_response_agent
+        )
+        compiled = workflow.compile()
+
+        # Check that the graph has the expected node names
+        node_names = set(compiled.get_graph().nodes.keys())
+        expected_nodes = {
+            "__start__",
+            "classify",
+            "summarize",
+            "generate_response",
+            "manual_review",
+            "publish_results",
+            "__end__",
+        }
+        assert expected_nodes.issubset(node_names)
+
+    def test_workflow_compiles_successfully(
+        self,
+        mock_classifier: AsyncMock,
+        mock_summarizer: AsyncMock,
+        mock_response_agent: AsyncMock,
+    ):
+        """The workflow graph should compile without errors."""
+        from src.agents.orchestrator import build_email_workflow
+
+        workflow = build_email_workflow(
+            mock_classifier, mock_summarizer, mock_response_agent
+        )
+        compiled = workflow.compile()
+        assert compiled is not None

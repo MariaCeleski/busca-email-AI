@@ -17,6 +17,7 @@ class EmailMetadata(BaseModel):
     category: EmailCategory
     thread_id: Optional[str] = None
     provider_message_id: str
+    user_id: Optional[str] = None
 
 
 class SearchResult(BaseModel):

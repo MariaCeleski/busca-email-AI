@@ -11,7 +11,20 @@ import type {
 } from '../types/email'
 
 const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
-const API_KEY = import.meta.env.VITE_API_KEY || ''
+
+/**
+ * Retrieve the active API key at request time.
+ * Priority: localStorage > VITE_API_KEY env variable.
+ */
+function getApiKey(): string {
+  try {
+    const stored = localStorage.getItem('ai_email_agent_api_key')
+    if (stored) return stored
+  } catch {
+    // localStorage unavailable (SSR / privacy mode)
+  }
+  return import.meta.env.VITE_API_KEY || ''
+}
 
 interface RequestOptions {
   method?: string
@@ -26,7 +39,7 @@ async function request<T>(endpoint: string, options: RequestOptions = {}): Promi
     method,
     headers: {
       'Content-Type': 'application/json',
-      'X-API-Key': API_KEY,
+      'X-API-Key': getApiKey(),
       ...headers,
     },
   }
@@ -108,22 +121,22 @@ export const api = {
    * GET /api/v1/auth/accounts — list connected accounts
    */
   getConnectedAccounts: () =>
-    request<ConnectedAccount[]>('/auth/accounts'),
+    request<ConnectedAccount[]>('/auth/accounts').catch(() => []),
 
   /**
-   * POST /api/v1/auth/gmail/connect — initiate Gmail OAuth
+   * GET /api/v1/auth/gmail/connect — initiate Gmail OAuth
    */
   connectGmail: () =>
-    request<{ redirect_url: string }>('/auth/gmail/connect', { method: 'POST' }),
+    request<{ authorization_url: string; provider: string; message: string }>('/auth/gmail/connect'),
 
   /**
-   * POST /api/v1/auth/microsoft/connect — initiate Microsoft OAuth
+   * GET /api/v1/auth/microsoft/connect — initiate Microsoft OAuth
    */
   connectMicrosoft: () =>
-    request<{ redirect_url: string }>('/auth/microsoft/connect', { method: 'POST' }),
+    request<{ authorization_url: string; provider: string; message: string }>('/auth/microsoft/connect'),
 
   /**
-   * POST /api/v1/auth/disconnect — disconnect an account
+   * POST /api/v1/auth/{provider}/disconnect — disconnect an account
    */
   disconnectAccount: (provider: string) =>
     request<{ message: string }>(`/auth/${provider}/disconnect`, { method: 'POST' }),

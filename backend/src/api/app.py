@@ -2,8 +2,9 @@
 
 Creates and configures the FastAPI application with:
 - CORS middleware
-- API key authentication middleware
+- Authentication middleware (API key + OAuth Bearer token)
 - Access logging middleware
+- Request validation error handler (422 with field-level errors)
 - All API routers
 """
 
@@ -38,21 +39,28 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    # --- Authentication Middleware ---
-    from src.api.middleware.auth import APIKeyAuthMiddleware
+    # --- Authentication Middleware (API key + OAuth token) ---
+    from src.api.middleware.auth import AuthMiddleware
 
-    app.add_middleware(APIKeyAuthMiddleware)
+    app.add_middleware(AuthMiddleware)
 
     # --- Access Logging Middleware ---
     from src.api.middleware.logging import AccessLoggingMiddleware
 
     app.add_middleware(AccessLoggingMiddleware)
 
+    # --- Request Validation Error Handler (422 with field-level errors) ---
+    from src.api.middleware.validation import install_validation_error_handler
+
+    install_validation_error_handler(app)
+
     # --- Routers ---
+    from src.api.routers.auth import router as auth_router
     from src.api.routers.emails import router as emails_router
     from src.api.routers.fetch import router as fetch_router
     from src.api.routers.websocket import router as websocket_router
 
+    app.include_router(auth_router)
     app.include_router(emails_router)
     app.include_router(fetch_router)
     app.include_router(websocket_router)

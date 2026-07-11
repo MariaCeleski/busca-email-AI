@@ -266,7 +266,7 @@ class TestEmailDetailEndpoint:
     def test_returns_404_for_nonexistent_email(self):
         """GET /emails/{id} returns 404 when email doesn't exist."""
         app = _create_test_app()
-        fake_id = str(uuid.uuid4())
+        fake_id = uuid.uuid4()
         mock_session = _mock_session_single(result=None)
 
         async def override_get_session():
@@ -277,13 +277,25 @@ class TestEmailDetailEndpoint:
 
         response = client.get(f"/api/v1/emails/{fake_id}")
         assert response.status_code == 404
-        assert response.json()["detail"] == "Email not found"
+        assert "not found" in response.json()["detail"]
         app.dependency_overrides.clear()
 
-    def test_returns_email_detail(self):
-        """GET /emails/{id} returns full processing result."""
+    def test_returns_email_detail_with_draft_reply(self):
+        """GET /emails/{id} returns full processing result with draft reply."""
         app = _create_test_app()
         email_id = uuid.uuid4()
+
+        mock_draft = MagicMock()
+        mock_draft.id = uuid.uuid4()
+        mock_draft.reply_body = "Thank you for your email."
+        mock_draft.suggested_subject = "Re: Test Subject"
+        mock_draft.referenced_email_ids = ["ref1", "ref2"]
+        mock_draft.status = "pending"
+        mock_draft.generated_at = datetime(2024, 1, 1, 13, 0, tzinfo=timezone.utc)
+        mock_draft.actioned_at = None
+        mock_draft.edited_body = None
+        mock_draft.edited_subject = None
+        mock_draft.send_error = None
 
         mock_email = MagicMock()
         mock_email.id = email_id
@@ -301,6 +313,7 @@ class TestEmailDetailEndpoint:
         mock_email.summary_is_fallback = False
         mock_email.workflow_stage = "completed"
         mock_email.flagged_for_review = False
+        mock_email.draft_replies = [mock_draft]
 
         mock_session = _mock_session_single(result=mock_email)
 
@@ -316,6 +329,47 @@ class TestEmailDetailEndpoint:
         assert data["email_id"] == str(email_id)
         assert data["sender"] == "test@test.com"
         assert data["classification"]["category"] == "Urgent"
+        assert data["draft_reply"] is not None
+        assert data["draft_reply"]["reply_body"] == "Thank you for your email."
+        assert data["draft_reply"]["status"] == "pending"
+        app.dependency_overrides.clear()
+
+    def test_returns_email_detail_without_draft(self):
+        """GET /emails/{id} returns null draft_reply when none exists."""
+        app = _create_test_app()
+        email_id = uuid.uuid4()
+
+        mock_email = MagicMock()
+        mock_email.id = email_id
+        mock_email.provider_message_id = "msg456"
+        mock_email.sender = "other@test.com"
+        mock_email.subject = "No Draft"
+        mock_email.body = "Body text"
+        mock_email.timestamp = datetime(2024, 1, 2, tzinfo=timezone.utc)
+        mock_email.processing_timestamp = datetime(2024, 1, 2, 12, 0, tzinfo=timezone.utc)
+        mock_email.category = "Informative"
+        mock_email.priority = "Low"
+        mock_email.confidence = 0.85
+        mock_email.summary = None
+        mock_email.action_items = None
+        mock_email.summary_is_fallback = False
+        mock_email.workflow_stage = "completed"
+        mock_email.flagged_for_review = False
+        mock_email.draft_replies = []
+
+        mock_session = _mock_session_single(result=mock_email)
+
+        async def override_get_session():
+            yield mock_session
+
+        app.dependency_overrides[get_session] = override_get_session
+        client = TestClient(app)
+
+        response = client.get(f"/api/v1/emails/{email_id}")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["email_id"] == str(email_id)
+        assert data["draft_reply"] is None
         app.dependency_overrides.clear()
 
 
@@ -364,15 +418,43 @@ class TestReplyApproveEndpoint:
         app.dependency_overrides.clear()
 
     def test_approve_with_edited_body(self):
-        """POST approve accepts edited_body and edited_subject."""
+        """POST approve accepts edited_body and edited_subject, attempts send."""
         app = _create_test_app()
         fake_email_id = uuid.uuid4()
 
         mock_draft = MagicMock()
         mock_draft.status = "pending"
         mock_draft.id = uuid.uuid4()
+        mock_draft.reply_body = "Original body"
+        mock_draft.suggested_subject = "Original subject"
+        mock_draft.edited_body = None
+        mock_draft.edited_subject = None
+        mock_draft.send_error = None
 
-        mock_session = _mock_session_single(result=mock_draft)
+        mock_email = MagicMock()
+        mock_email.id = fake_email_id
+        mock_email.sender = "test@test.com"
+        mock_email.provider_message_id = "msg123"
+        mock_email.thread_id = "thread123"
+        mock_email.provider = "gmail"
+        mock_email.user_id = uuid.uuid4()
+
+        mock_session = AsyncMock()
+        # First execute call: DraftReplyRepository.get_by_email_id
+        mock_draft_result = MagicMock()
+        mock_draft_result.scalar_one_or_none.return_value = mock_draft
+        # Second execute call: ConnectedAccount query (returns None = no account)
+        mock_account_result = MagicMock()
+        mock_account_result.scalar_one_or_none.return_value = None
+
+        mock_session.execute = AsyncMock(
+            side_effect=[mock_draft_result, mock_account_result]
+        )
+        mock_session.flush = AsyncMock()
+        mock_session.commit = AsyncMock()
+
+        # Mock the ProcessedEmailRepository.get_by_id via session.get
+        mock_session.get = AsyncMock(return_value=mock_email)
 
         async def override_get_session():
             yield mock_session
@@ -386,7 +468,203 @@ class TestReplyApproveEndpoint:
         )
         assert response.status_code == 200
         data = response.json()
-        assert data["status"] == "approved"
+        # Without a connected account, send will fail, so status is send_failed
+        assert data["status"] == "send_failed"
+        assert "No connected email account" in data["error"]
+        app.dependency_overrides.clear()
+
+    @patch("src.api.routers.emails._attempt_send")
+    def test_approve_successful_send(self, mock_send):
+        """POST approve returns 'sent' when email provider succeeds."""
+        from src.models.auth import SendResult
+
+        mock_send.return_value = SendResult(
+            success=True, provider_message_id="sent-msg-123"
+        )
+
+        app = _create_test_app()
+        fake_email_id = uuid.uuid4()
+
+        mock_draft = MagicMock()
+        mock_draft.status = "pending"
+        mock_draft.id = uuid.uuid4()
+        mock_draft.reply_body = "Hello"
+        mock_draft.suggested_subject = "Re: Test"
+        mock_draft.edited_body = None
+        mock_draft.edited_subject = None
+        mock_draft.send_error = None
+
+        mock_email = MagicMock()
+        mock_email.id = fake_email_id
+        mock_email.sender = "sender@test.com"
+        mock_email.provider_message_id = "original-msg-id"
+        mock_email.thread_id = "thread-1"
+        mock_email.provider = "gmail"
+        mock_email.user_id = uuid.uuid4()
+
+        mock_session = AsyncMock()
+        mock_draft_result = MagicMock()
+        mock_draft_result.scalar_one_or_none.return_value = mock_draft
+        mock_session.execute = AsyncMock(return_value=mock_draft_result)
+        mock_session.flush = AsyncMock()
+        mock_session.commit = AsyncMock()
+        mock_session.get = AsyncMock(return_value=mock_email)
+
+        async def override_get_session():
+            yield mock_session
+
+        app.dependency_overrides[get_session] = override_get_session
+        client = TestClient(app)
+
+        response = client.post(f"/api/v1/emails/{fake_email_id}/reply/approve")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "sent"
+        assert data["message"] == "Reply sent successfully"
+        app.dependency_overrides.clear()
+
+    @patch("src.api.routers.emails._attempt_send")
+    def test_approve_send_failure_retains_draft(self, mock_send):
+        """POST approve returns 'send_failed' and stores error on provider failure."""
+        from src.models.auth import SendResult
+
+        mock_send.return_value = SendResult(
+            success=False, error="SMTP connection refused"
+        )
+
+        app = _create_test_app()
+        fake_email_id = uuid.uuid4()
+
+        mock_draft = MagicMock()
+        mock_draft.status = "pending"
+        mock_draft.id = uuid.uuid4()
+        mock_draft.reply_body = "Hello"
+        mock_draft.suggested_subject = "Re: Test"
+        mock_draft.edited_body = None
+        mock_draft.edited_subject = None
+        mock_draft.send_error = None
+
+        mock_email = MagicMock()
+        mock_email.id = fake_email_id
+        mock_email.sender = "sender@test.com"
+        mock_email.provider_message_id = "original-msg-id"
+        mock_email.thread_id = "thread-1"
+        mock_email.provider = "gmail"
+        mock_email.user_id = uuid.uuid4()
+
+        mock_session = AsyncMock()
+        mock_draft_result = MagicMock()
+        mock_draft_result.scalar_one_or_none.return_value = mock_draft
+        mock_session.execute = AsyncMock(return_value=mock_draft_result)
+        mock_session.flush = AsyncMock()
+        mock_session.commit = AsyncMock()
+        mock_session.get = AsyncMock(return_value=mock_email)
+
+        async def override_get_session():
+            yield mock_session
+
+        app.dependency_overrides[get_session] = override_get_session
+        client = TestClient(app)
+
+        response = client.post(f"/api/v1/emails/{fake_email_id}/reply/approve")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "send_failed"
+        assert "SMTP connection refused" in data["error"]
+        assert "retry" in data["message"].lower()
+        app.dependency_overrides.clear()
+
+    @patch("src.api.routers.emails._attempt_send")
+    def test_approve_retry_after_send_failed(self, mock_send):
+        """POST approve allows retry when draft is in 'send_failed' state."""
+        from src.models.auth import SendResult
+
+        mock_send.return_value = SendResult(
+            success=True, provider_message_id="retry-msg-456"
+        )
+
+        app = _create_test_app()
+        fake_email_id = uuid.uuid4()
+
+        mock_draft = MagicMock()
+        mock_draft.status = "send_failed"  # Previously failed
+        mock_draft.id = uuid.uuid4()
+        mock_draft.reply_body = "Hello"
+        mock_draft.suggested_subject = "Re: Test"
+        mock_draft.edited_body = None
+        mock_draft.edited_subject = None
+        mock_draft.send_error = "Previous error"
+
+        mock_email = MagicMock()
+        mock_email.id = fake_email_id
+        mock_email.sender = "sender@test.com"
+        mock_email.provider_message_id = "original-msg-id"
+        mock_email.thread_id = "thread-1"
+        mock_email.provider = "gmail"
+        mock_email.user_id = uuid.uuid4()
+
+        mock_session = AsyncMock()
+        mock_draft_result = MagicMock()
+        mock_draft_result.scalar_one_or_none.return_value = mock_draft
+        mock_session.execute = AsyncMock(return_value=mock_draft_result)
+        mock_session.flush = AsyncMock()
+        mock_session.commit = AsyncMock()
+        mock_session.get = AsyncMock(return_value=mock_email)
+
+        async def override_get_session():
+            yield mock_session
+
+        app.dependency_overrides[get_session] = override_get_session
+        client = TestClient(app)
+
+        response = client.post(f"/api/v1/emails/{fake_email_id}/reply/approve")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "sent"
+        app.dependency_overrides.clear()
+
+    def test_approve_returns_409_for_sent_draft(self):
+        """POST approve returns 409 for already-sent drafts (no retry possible)."""
+        app = _create_test_app()
+        fake_email_id = uuid.uuid4()
+
+        mock_draft = MagicMock()
+        mock_draft.status = "sent"
+        mock_draft.id = uuid.uuid4()
+
+        mock_session = _mock_session_single(result=mock_draft)
+
+        async def override_get_session():
+            yield mock_session
+
+        app.dependency_overrides[get_session] = override_get_session
+        client = TestClient(app)
+
+        response = client.post(f"/api/v1/emails/{fake_email_id}/reply/approve")
+        assert response.status_code == 409
+        assert "already actioned" in response.json()["detail"]
+        app.dependency_overrides.clear()
+
+    def test_approve_returns_409_for_rejected_draft(self):
+        """POST approve returns 409 for rejected drafts."""
+        app = _create_test_app()
+        fake_email_id = uuid.uuid4()
+
+        mock_draft = MagicMock()
+        mock_draft.status = "rejected"
+        mock_draft.id = uuid.uuid4()
+
+        mock_session = _mock_session_single(result=mock_draft)
+
+        async def override_get_session():
+            yield mock_session
+
+        app.dependency_overrides[get_session] = override_get_session
+        client = TestClient(app)
+
+        response = client.post(f"/api/v1/emails/{fake_email_id}/reply/approve")
+        assert response.status_code == 409
+        assert "already actioned" in response.json()["detail"]
         app.dependency_overrides.clear()
 
 
@@ -447,12 +725,102 @@ class TestReplyRejectEndpoint:
 class TestFetchEndpoint:
     """Test POST /api/v1/emails/fetch."""
 
-    def test_fetch_returns_acknowledgment(self):
-        """POST /emails/fetch returns accepted status."""
+    @patch("src.tasks.poll_emails.poll_emails_task")
+    def test_fetch_returns_acknowledgment(self, mock_poll_task):
+        """POST /emails/fetch returns fetch_initiated status with task_id."""
+        mock_result = MagicMock()
+        mock_result.id = "test-task-id-123"
+        mock_poll_task.delay.return_value = mock_result
+
         app = _create_test_app()
         client = TestClient(app)
         response = client.post("/api/v1/emails/fetch")
         assert response.status_code == 200
         data = response.json()
-        assert data["status"] == "accepted"
+        assert data["status"] == "fetch_initiated"
+        assert data["task_id"] == "test-task-id-123"
         assert "message" in data
+
+
+# --- Review Endpoint Tests ---
+
+
+class TestReviewEndpoint:
+    """Test GET /api/v1/emails/review."""
+
+    def test_review_returns_empty_list(self):
+        """GET /emails/review returns empty paginated response when no flagged emails."""
+        app = _create_test_app()
+        mock_session = _mock_session_paginated(count_value=0, items=[])
+
+        async def override_get_session():
+            yield mock_session
+
+        app.dependency_overrides[get_session] = override_get_session
+        client = TestClient(app)
+
+        response = client.get("/api/v1/emails/review")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total"] == 0
+        assert data["items"] == []
+        assert data["page"] == 1
+        assert data["page_size"] == 20
+        app.dependency_overrides.clear()
+
+    def test_review_returns_flagged_emails(self):
+        """GET /emails/review returns emails flagged for review."""
+        app = _create_test_app()
+
+        mock_email = MagicMock()
+        mock_email.id = uuid.uuid4()
+        mock_email.provider_message_id = "msg_review"
+        mock_email.sender = "low_conf@test.com"
+        mock_email.subject = "Low Confidence"
+        mock_email.body = "Body"
+        mock_email.timestamp = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        mock_email.processing_timestamp = datetime(2024, 1, 1, 12, 0, tzinfo=timezone.utc)
+        mock_email.category = "Informative"
+        mock_email.priority = "Medium"
+        mock_email.confidence = 0.55
+        mock_email.summary = None
+        mock_email.action_items = None
+        mock_email.summary_is_fallback = False
+        mock_email.workflow_stage = "manual_review"
+        mock_email.flagged_for_review = True
+
+        mock_session = _mock_session_paginated(count_value=1, items=[mock_email])
+
+        async def override_get_session():
+            yield mock_session
+
+        app.dependency_overrides[get_session] = override_get_session
+        client = TestClient(app)
+
+        response = client.get("/api/v1/emails/review")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total"] == 1
+        assert len(data["items"]) == 1
+        assert data["items"][0]["flagged_for_review"] is True
+        app.dependency_overrides.clear()
+
+    def test_review_supports_pagination(self):
+        """GET /emails/review supports page and page_size params."""
+        app = _create_test_app()
+        mock_session = _mock_session_paginated(count_value=50, items=[])
+
+        async def override_get_session():
+            yield mock_session
+
+        app.dependency_overrides[get_session] = override_get_session
+        client = TestClient(app)
+
+        response = client.get("/api/v1/emails/review?page=2&page_size=10")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["page"] == 2
+        assert data["page_size"] == 10
+        assert data["total"] == 50
+        assert data["total_pages"] == 5
+        app.dependency_overrides.clear()

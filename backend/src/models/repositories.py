@@ -175,7 +175,7 @@ class ConnectedAccountRepository(BaseRepository[ConnectedAccount]):
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
 
-    async def list_by_user(self, user_id: uuid.UUID) -> Sequence[ConnectedAccount]:
+    async def get_by_user(self, user_id: uuid.UUID) -> Sequence[ConnectedAccount]:
         """List all connected accounts for a user.
 
         Args:
@@ -189,6 +189,50 @@ class ConnectedAccountRepository(BaseRepository[ConnectedAccount]):
         )
         result = await self.session.execute(stmt)
         return result.scalars().all()
+
+    # Keep list_by_user as alias for backward compatibility
+    async def list_by_user(self, user_id: uuid.UUID) -> Sequence[ConnectedAccount]:
+        """Alias for get_by_user. List all connected accounts for a user."""
+        return await self.get_by_user(user_id)
+
+    async def update_tokens(
+        self,
+        account_id: uuid.UUID,
+        encrypted_access_token: bytes,
+        encrypted_refresh_token: bytes,
+        token_expires_at: datetime,
+    ) -> ConnectedAccount | None:
+        """Update OAuth tokens for a connected account.
+
+        Args:
+            account_id: The connected account UUID.
+            encrypted_access_token: AES-256 encrypted access token.
+            encrypted_refresh_token: AES-256 encrypted refresh token.
+            token_expires_at: Token expiration timestamp.
+
+        Returns:
+            The updated ConnectedAccount instance or None if not found.
+        """
+        return await self.update(
+            account_id,
+            encrypted_access_token=encrypted_access_token,
+            encrypted_refresh_token=encrypted_refresh_token,
+            token_expires_at=token_expires_at,
+        )
+
+    async def update_status(
+        self, account_id: uuid.UUID, status: str
+    ) -> ConnectedAccount | None:
+        """Update the connection status of an account.
+
+        Args:
+            account_id: The connected account UUID.
+            status: New status value (e.g., 'connected', 'disconnected', 'pending').
+
+        Returns:
+            The updated ConnectedAccount instance or None if not found.
+        """
+        return await self.update(account_id, status=status)
 
     async def delete_by_user(self, user_id: uuid.UUID) -> int:
         """Delete all connected accounts for a user.
@@ -311,6 +355,89 @@ class ProcessedEmailRepository(BaseRepository[ProcessedEmail]):
         result = await self.session.execute(stmt)
         return result.scalar_one()
 
+    async def is_duplicate(self, provider_message_id: str) -> bool:
+        """Check if an email with the given provider message ID already exists.
+
+        Args:
+            provider_message_id: The unique message ID from the email provider.
+
+        Returns:
+            True if a record with this provider_message_id exists, False otherwise.
+        """
+        existing = await self.get_by_provider_message_id(provider_message_id)
+        return existing is not None
+
+    async def update_classification(
+        self,
+        email_id: uuid.UUID,
+        category: str,
+        priority: str,
+        confidence: float,
+        flagged_for_review: bool = False,
+    ) -> ProcessedEmail | None:
+        """Update classification fields for a processed email.
+
+        Args:
+            email_id: The processed email UUID.
+            category: Assigned category (e.g., 'Urgent', 'Informative').
+            priority: Assigned priority (e.g., 'High', 'Medium', 'Low').
+            confidence: Classification confidence score (0.0 to 1.0).
+            flagged_for_review: Whether to flag for manual review.
+
+        Returns:
+            The updated ProcessedEmail instance or None if not found.
+        """
+        return await self.update(
+            email_id,
+            category=category,
+            priority=priority,
+            confidence=confidence,
+            flagged_for_review=flagged_for_review,
+        )
+
+    async def update_summary(
+        self,
+        email_id: uuid.UUID,
+        summary: str,
+        action_items: list | None = None,
+        summary_is_fallback: bool = False,
+    ) -> ProcessedEmail | None:
+        """Update summary fields for a processed email.
+
+        Args:
+            email_id: The processed email UUID.
+            summary: The generated summary text.
+            action_items: Extracted action items list.
+            summary_is_fallback: Whether the summary is a fallback.
+
+        Returns:
+            The updated ProcessedEmail instance or None if not found.
+        """
+        return await self.update(
+            email_id,
+            summary=summary,
+            action_items=action_items or [],
+            summary_is_fallback=summary_is_fallback,
+        )
+
+    async def update_workflow_stage(
+        self, email_id: uuid.UUID, workflow_stage: str, error_message: str | None = None
+    ) -> ProcessedEmail | None:
+        """Update the workflow stage for a processed email.
+
+        Args:
+            email_id: The processed email UUID.
+            workflow_stage: New workflow stage value.
+            error_message: Optional error message if stage is 'failed'.
+
+        Returns:
+            The updated ProcessedEmail instance or None if not found.
+        """
+        kwargs: dict[str, Any] = {"workflow_stage": workflow_stage}
+        if error_message is not None:
+            kwargs["error_message"] = error_message
+        return await self.update(email_id, **kwargs)
+
     async def list_flagged_for_review(
         self, user_id: uuid.UUID, offset: int = 0, limit: int = 20
     ) -> Sequence[ProcessedEmail]:
@@ -369,6 +496,66 @@ class DraftReplyRepository(BaseRepository[DraftReply]):
         stmt = select(DraftReply).where(DraftReply.email_id == email_id)
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
+
+    async def update_status(
+        self,
+        draft_id: uuid.UUID,
+        status: str,
+        actioned_at: datetime | None = None,
+        edited_body: str | None = None,
+        edited_subject: str | None = None,
+        send_error: str | None = None,
+    ) -> DraftReply | None:
+        """Update the status and optional fields of a draft reply.
+
+        Args:
+            draft_id: The draft reply UUID.
+            status: New status value (pending, approved, rejected, sent, send_failed).
+            actioned_at: Timestamp when the action was performed.
+            edited_body: Optional edited body text.
+            edited_subject: Optional edited subject line.
+            send_error: Optional send error message.
+
+        Returns:
+            The updated DraftReply instance or None if not found.
+        """
+        kwargs: dict[str, Any] = {"status": status}
+        if actioned_at is not None:
+            kwargs["actioned_at"] = actioned_at
+        if edited_body is not None:
+            kwargs["edited_body"] = edited_body
+        if edited_subject is not None:
+            kwargs["edited_subject"] = edited_subject
+        if send_error is not None:
+            kwargs["send_error"] = send_error
+        return await self.update(draft_id, **kwargs)
+
+    async def get_pending_by_user(
+        self, user_id: uuid.UUID, offset: int = 0, limit: int = 20
+    ) -> Sequence[DraftReply]:
+        """List pending draft replies for a user (via their processed emails).
+
+        Args:
+            user_id: The user's UUID.
+            offset: Number of records to skip.
+            limit: Maximum number of records to return.
+
+        Returns:
+            Sequence of pending DraftReply instances for the given user.
+        """
+        stmt = (
+            select(DraftReply)
+            .join(ProcessedEmail, DraftReply.email_id == ProcessedEmail.id)
+            .where(
+                ProcessedEmail.user_id == user_id,
+                DraftReply.status == "pending",
+            )
+            .order_by(DraftReply.generated_at.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+        result = await self.session.execute(stmt)
+        return result.scalars().all()
 
     async def list_pending(
         self, offset: int = 0, limit: int = 20
@@ -451,6 +638,45 @@ class WorkflowExecutionRepository(BaseRepository[WorkflowExecution]):
         )
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
+
+    async def update_stage(
+        self,
+        workflow_id: uuid.UUID,
+        current_stage: str,
+        completed_at: datetime | None = None,
+        error_message: str | None = None,
+    ) -> WorkflowExecution | None:
+        """Update the current stage of a workflow execution.
+
+        Args:
+            workflow_id: The workflow execution UUID.
+            current_stage: New stage value.
+            completed_at: Optional completion timestamp.
+            error_message: Optional error message if stage is 'failed'.
+
+        Returns:
+            The updated WorkflowExecution instance or None if not found.
+        """
+        kwargs: dict[str, Any] = {"current_stage": current_stage}
+        if completed_at is not None:
+            kwargs["completed_at"] = completed_at
+        if error_message is not None:
+            kwargs["error_message"] = error_message
+        return await self.update(workflow_id, **kwargs)
+
+    async def update_retry_count(
+        self, workflow_id: uuid.UUID, retry_counts: dict[str, int]
+    ) -> WorkflowExecution | None:
+        """Update the retry counts for a workflow execution.
+
+        Args:
+            workflow_id: The workflow execution UUID.
+            retry_counts: Dictionary mapping agent names to their retry counts.
+
+        Returns:
+            The updated WorkflowExecution instance or None if not found.
+        """
+        return await self.update(workflow_id, retry_counts=retry_counts)
 
     async def list_active(
         self, offset: int = 0, limit: int = 20
