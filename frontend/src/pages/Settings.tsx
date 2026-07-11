@@ -99,7 +99,7 @@ export function Settings() {
     try {
       const result = await api.connectGmail()
       // Redirect user to the OAuth consent screen
-      window.location.href = result.redirect_url
+      window.location.href = result.authorization_url
     } catch (err) {
       addNotification({
         type: 'error',
@@ -116,7 +116,7 @@ export function Settings() {
     try {
       const result = await api.connectMicrosoft()
       // Redirect user to the OAuth consent screen
-      window.location.href = result.redirect_url
+      window.location.href = result.authorization_url
     } catch (err) {
       addNotification({
         type: 'error',

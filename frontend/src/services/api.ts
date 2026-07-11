@@ -121,22 +121,22 @@ export const api = {
    * GET /api/v1/auth/accounts — list connected accounts
    */
   getConnectedAccounts: () =>
-    request<ConnectedAccount[]>('/auth/accounts'),
+    request<ConnectedAccount[]>('/auth/accounts').catch(() => []),
 
   /**
-   * POST /api/v1/auth/gmail/connect — initiate Gmail OAuth
+   * GET /api/v1/auth/gmail/connect — initiate Gmail OAuth
    */
   connectGmail: () =>
-    request<{ redirect_url: string }>('/auth/gmail/connect', { method: 'POST' }),
+    request<{ authorization_url: string; provider: string; message: string }>('/auth/gmail/connect'),
 
   /**
-   * POST /api/v1/auth/microsoft/connect — initiate Microsoft OAuth
+   * GET /api/v1/auth/microsoft/connect — initiate Microsoft OAuth
    */
   connectMicrosoft: () =>
-    request<{ redirect_url: string }>('/auth/microsoft/connect', { method: 'POST' }),
+    request<{ authorization_url: string; provider: string; message: string }>('/auth/microsoft/connect'),
 
   /**
-   * POST /api/v1/auth/disconnect — disconnect an account
+   * POST /api/v1/auth/{provider}/disconnect — disconnect an account
    */
   disconnectAccount: (provider: string) =>
     request<{ message: string }>(`/auth/${provider}/disconnect`, { method: 'POST' }),

@@ -34,7 +34,7 @@ export class WebSocketClient {
   constructor(url?: string) {
     const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000'
     const wsBase = baseUrl.replace(/^http/, 'ws')
-    this.url = url || `${wsBase}/ws`
+    this.url = url || `${wsBase}/api/v1/ws`
   }
 
   get isConnected(): boolean {
