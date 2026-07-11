@@ -169,6 +169,33 @@ async def _delete_user_data_with_retry(
 # --- Endpoints ---
 
 
+@router.get("/accounts")
+async def list_connected_accounts(
+    session: AsyncSession = Depends(get_session),
+):
+    """List all connected email accounts for the current user.
+
+    Returns a list of connected accounts with provider, email, status, and last sync info.
+    """
+    from sqlalchemy import select
+    from src.models.orm import ConnectedAccount as ConnectedAccountORM
+
+    stmt = select(ConnectedAccountORM)
+    result = await session.execute(stmt)
+    accounts = result.scalars().all()
+
+    return [
+        {
+            "provider": a.provider,
+            "email_address": a.email_address or "",
+            "status": a.status,
+            "connected_at": a.connected_at.isoformat() if a.connected_at else None,
+            "last_sync": a.last_sync.isoformat() if a.last_sync else None,
+        }
+        for a in accounts
+    ]
+
+
 @router.get("/{provider}/connect")
 async def connect_account(
     provider: str,
