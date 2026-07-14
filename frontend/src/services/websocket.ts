@@ -27,7 +27,7 @@ export class WebSocketClient {
   private handlers: MessageHandler[] = []
   private reconnectAttempts = 0
   private maxReconnectAttempts = 5
-  private reconnectDelay = 3000
+  private reconnectDelay = 5000
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
   private _isConnected = false
 

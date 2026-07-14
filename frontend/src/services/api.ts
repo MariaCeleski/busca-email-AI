@@ -91,8 +91,10 @@ export const api = {
   /**
    * GET /api/v1/emails/review — emails flagged for manual review
    */
-  getReviewEmails: () =>
-    request<EmailProcessingResult[]>('/emails/review'),
+  getReviewEmails: async () => {
+    const data = await request<PaginatedResponse<EmailProcessingResult>>('/emails/review')
+    return data.items
+  },
 
   /**
    * POST /api/v1/emails/{id}/reply/approve — approve a draft reply

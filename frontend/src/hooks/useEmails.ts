@@ -120,9 +120,10 @@ export function useReviewEmails(): UseReviewEmailsResult {
     setError(null)
     try {
       const data = await api.getReviewEmails()
-      setEmails(data)
+      setEmails(Array.isArray(data) ? data : [])
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch review emails')
+      setEmails([])
     } finally {
       setLoading(false)
     }

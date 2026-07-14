@@ -54,17 +54,17 @@ export function EmailList({ emails }: EmailListProps) {
               <td>
                 <span
                   className="category-badge"
-                  style={{ backgroundColor: CATEGORY_COLORS[email.classification.category] }}
+                  style={{ backgroundColor: CATEGORY_COLORS[(email.classification?.category || 'Informative') as EmailCategory] }}
                 >
-                  {email.classification.category}
+                  {email.classification?.category || 'Pendente'}
                 </span>
               </td>
               <td>
-                <span className={`priority-${email.classification.priority.toLowerCase()}`}>
-                  {email.classification.priority}
+                <span className={`priority-${(email.classification?.priority || 'low').toLowerCase()}`}>
+                  {email.classification?.priority || '—'}
                 </span>
               </td>
-              <td>{email.classification.confidence.toFixed(2)}</td>
+              <td>{email.classification?.confidence != null ? email.classification.confidence.toFixed(2) : '—'}</td>
               <td className="email-sender">{email.sender}</td>
               <td className="email-subject">{email.subject}</td>
               <td className="email-timestamp">{formatDate(email.processing_timestamp)}</td>
