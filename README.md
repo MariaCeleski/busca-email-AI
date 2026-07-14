@@ -41,6 +41,15 @@ alembic upgrade head
 
 # Start the API server
 uvicorn src.api:app --reload --host 0.0.0.0 --port 8000
+cd backend
+.venv/bin/python -m uvicorn src.api.app:create_app --factory --host 0.0.0.0 --port 8000 --reload
+cd backend
+.venv/bin/celery -A src.tasks.celery_app:celery_app worker --loglevel=info
+# Terminal separado:
+cd backend
+docker compose up -d
+
+
 ```
 
 ### 3. Frontend setup
