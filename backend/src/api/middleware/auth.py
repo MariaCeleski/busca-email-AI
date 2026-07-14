@@ -106,6 +106,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         """Validate authentication before forwarding the request."""
+        # Skip auth for CORS preflight requests (OPTIONS)
+        if request.method == "OPTIONS":
+            return await call_next(request)
+
         # Skip auth for public/documentation endpoints
         if _is_public_path(request.url.path):
             return await call_next(request)
