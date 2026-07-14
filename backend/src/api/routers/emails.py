@@ -311,7 +311,7 @@ async def approve_reply(
         )
 
     # Apply edits if provided
-    now = datetime.now(timezone.utc)
+    now = datetime.utcnow()
     draft.status = "approved"
     draft.actioned_at = now
     draft.send_error = None  # Clear previous error on retry
@@ -492,7 +492,7 @@ async def reject_reply(
 
     # Update draft status to rejected
     draft.status = "rejected"
-    draft.actioned_at = datetime.now(timezone.utc)
+    draft.actioned_at = datetime.utcnow()
 
     # Mark the email as requiring manual response (Requirement 7.7)
     email_repo = ProcessedEmailRepository(session)

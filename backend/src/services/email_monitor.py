@@ -467,7 +467,7 @@ class EmailMonitor:
                 "attachments": attachments_data,
                 "thread_id": email.thread_id,
                 "provider": email.provider,
-                "processing_timestamp": datetime.now(timezone.utc),
+                "processing_timestamp": datetime.utcnow(),
                 "workflow_stage": "queued",
             }
             if self._user_id is not None:
