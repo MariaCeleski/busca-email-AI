@@ -32,8 +32,8 @@ from src.models.database import Base
 
 
 def _utcnow() -> datetime:
-    """Return current UTC datetime."""
-    return datetime.now(timezone.utc)
+    """Return current UTC datetime (naive, without timezone info)."""
+    return datetime.utcnow()
 
 
 class User(Base):

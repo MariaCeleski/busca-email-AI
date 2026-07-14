@@ -282,14 +282,50 @@ async def oauth_callback(
     oauth_manager = OAuthManager(session=session)
 
     try:
-        # Exchange code for tokens (stores encrypted in DB)
-        # user_id would normally come from session/state, using None for now
-        # to let handle_callback store tokens if user context is available
+        # Usar o user demo como fallback se state não vier com user_id
+        demo_user_id = "12345678-1234-5678-1234-567812345678"
+        effective_user_id = state if state else demo_user_id
+
+        # Garantir que o user existe no banco
+        from src.models.orm import User, ConnectedAccount as ConnectedAccountORM
+        import uuid as uuid_mod
+        user_uuid = uuid_mod.UUID(effective_user_id)
+        existing_user = await session.get(User, user_uuid)
+        if not existing_user:
+            new_user = User(id=user_uuid, email="demo@example.com")
+            session.add(new_user)
+            await session.flush()
+
+        # Exchange code for tokens
         token_pair = await oauth_manager.handle_callback(
             code=code,
             provider=provider,
-            user_id=state,  # state param can carry user_id
+            user_id=effective_user_id,
         )
+
+        # Verificar se connected_account foi criada, se não, criar
+        from sqlalchemy import select
+        stmt = select(ConnectedAccountORM).where(
+            ConnectedAccountORM.user_id == user_uuid,
+            ConnectedAccountORM.provider == provider,
+        )
+        result = await session.execute(stmt)
+        account = result.scalar_one_or_none()
+        if account is None:
+            from src.security.encryption import TokenEncryptionService
+            enc = TokenEncryptionService()
+            new_account = ConnectedAccountORM(
+                user_id=user_uuid,
+                provider=provider,
+                email_address=f"connected@{provider}.com",
+                encrypted_access_token=enc.encrypt(token_pair.access_token),
+                encrypted_refresh_token=enc.encrypt(token_pair.refresh_token),
+                token_expires_at=token_pair.expires_at.replace(tzinfo=None) if token_pair.expires_at else None,
+                status="connected",
+            )
+            session.add(new_account)
+            await session.flush()
+
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:

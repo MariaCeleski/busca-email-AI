@@ -22,7 +22,7 @@ function formatDate(dateStr: string): string {
 }
 
 export function ManualReview() {
-  const { emails, loading, error, refresh } = useReviewEmails()
+  const { emails = [], loading, error, refresh } = useReviewEmails()
   const navigate = useNavigate()
 
   return (

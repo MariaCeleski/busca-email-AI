@@ -61,6 +61,22 @@ export function Dashboard() {
         <h1>Email Dashboard</h1>
         <div className="header-actions">
           <span className="email-count">{total} emails total</span>
+          {/* Botão para buscar e-mails REAIS do Gmail/Outlook via conta conectada */}
+          <button
+            onClick={async () => {
+              try {
+                await fetch('http://localhost:8000/api/v1/emails/fetch', {
+                  method: 'POST',
+                  headers: { 'X-API-Key': localStorage.getItem('ai_email_agent_api_key') || '' },
+                })
+                setTimeout(() => { refresh(); refreshReview() }, 5000)
+              } catch {}
+            }}
+            className="btn btn-primary"
+            disabled={loading}
+          >
+            📥 Buscar E-mails
+          </button>
           <button onClick={() => { refresh(); refreshReview() }} className="btn btn-secondary" disabled={loading}>
             Refresh
           </button>
