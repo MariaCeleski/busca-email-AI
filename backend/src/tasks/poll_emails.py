@@ -237,6 +237,6 @@ async def _update_last_sync(account_repo, account_id) -> None:
     from datetime import datetime, timezone
 
     try:
-        await account_repo.update(account_id, last_sync=datetime.now(timezone.utc))
+        await account_repo.update(account_id, last_sync=datetime.utcnow())
     except Exception as exc:
         logger.warning("Failed to update last_sync for account %s: %s", account_id, exc)

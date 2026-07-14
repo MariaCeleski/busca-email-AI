@@ -79,7 +79,7 @@ class AccessLogger:
             requester_id=sanitized_requester,
             endpoint=sanitized_endpoint,
             method=sanitized_method,
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.utcnow(),
             response_status=response_status,
         )
 
