@@ -57,11 +57,13 @@ def create_app() -> FastAPI:
     # --- Routers ---
     from src.api.routers.auth import router as auth_router
     from src.api.routers.emails import router as emails_router
+    from src.api.routers.feedback import router as feedback_router
     from src.api.routers.fetch import router as fetch_router
     from src.api.routers.websocket import router as websocket_router
 
     app.include_router(auth_router)
     app.include_router(emails_router)
+    app.include_router(feedback_router)
     app.include_router(fetch_router)
     app.include_router(websocket_router)
 
