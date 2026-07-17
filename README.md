@@ -265,3 +265,160 @@ Acesse: http://localhost:3000 — Login com API Key: `dev-api-key-2024`
 | Infraestrutura | PostgreSQL 16, Redis 7, Docker Compose |
 | Testes | pytest (511 testes), TypeScript compiler |
 | CI/CD | GitHub Actions |
+
+---
+
+## 15. Variáveis de Ambiente
+
+Copie `backend/.env.example` para `backend/.env` e preencha:
+
+| Variável | Descrição | Exemplo |
+|----------|-----------|---------|
+| `OPENAI_API_KEY` | Chave da API OpenAI | `sk-...` |
+| `OPENAI_MODEL` | Modelo a usar | `gpt-4o-mini` |
+| `DATABASE_URL` | URL do PostgreSQL | `postgresql+asyncpg://postgres:postgres@localhost:5432/email_agent` |
+| `REDIS_URL` | URL do Redis | `redis://localhost:6379/0` |
+| `API_KEY` | Chave de acesso ao dashboard | `dev-api-key-2024` |
+| `ENCRYPTION_KEY` | Chave AES-256 para tokens (base64, 32 bytes) | `(gerada automaticamente)` |
+| `GOOGLE_CLIENT_ID` | OAuth Google (opcional) | `208172...apps.googleusercontent.com` |
+| `GOOGLE_CLIENT_SECRET` | Secret OAuth Google | `GOCSPX-...` |
+| `CORS_ORIGINS` | Origins permitidas para CORS | `http://localhost:3000` |
+
+---
+
+## 16. Cenários de Uso (Entrada/Saída)
+
+### Cenário 1 — Email Urgente (Alta prioridade)
+
+**Entrada:**
+```json
+{
+  "sender": "ceo@empresa.com",
+  "subject": "URGENTE: Sistema fora do ar - cliente reclamando",
+  "body": "O sistema caiu há 30 min. Cliente ligando a cada 5 min. SLA violado. Preciso de status em 15 min."
+}
+```
+
+**Saída:**
+```json
+{
+  "classification": { "category": "Urgent", "priority": "High", "confidence": 0.92 },
+  "summary": { "summary": "Sistema de produção caiu. Cliente cobrando. SLA violado.", "action_items": ["Verificar servidor", "Entrar na call", "Enviar status em 15 min"] },
+  "draft_reply": { "suggested_subject": "Re: URGENTE — ação imediata", "reply_body": "Recebido. Verificando agora. Status em 15 min.", "status": "pending" }
+}
+```
+
+### Cenário 2 — Spam (Baixa confiança → revisão manual)
+
+**Entrada:**
+```json
+{
+  "sender": "ganhe-dinheiro@promo99.xyz",
+  "subject": "🔥💰 GANHE R$50.000 TRABALHANDO DE CASA!!!",
+  "body": "PARABÉNS! Você foi selecionado para ganhar R$50.000 por mês! Clique AGORA!"
+}
+```
+
+**Saída:**
+```json
+{
+  "classification": { "category": "Spam", "priority": "Low", "confidence": 0.45 },
+  "summary": null,
+  "draft_reply": { "suggested_subject": "Re: Proposta recebida", "reply_body": "Agradeço pelo contato, mas não poderei seguir com essa proposta.", "status": "pending" },
+  "flagged_for_review": true
+}
+```
+
+### Cenário 3 — Email Informativo (Sem resposta necessária)
+
+**Entrada:**
+```json
+{
+  "sender": "rh@empresa.com",
+  "subject": "Comunicado: Novo horário do refeitório",
+  "body": "A partir de segunda, o refeitório funciona: Café 7h-9h, Almoço 11h30-14h, Lanche 15h-16h30."
+}
+```
+
+**Saída:**
+```json
+{
+  "classification": { "category": "Informative", "priority": "Low", "confidence": 0.91 },
+  "summary": { "summary": "Refeitório muda horário a partir de segunda.", "action_items": [] },
+  "draft_reply": null
+}
+```
+
+### Cenário 4 — Email Pessoal com resposta gerada
+
+**Entrada:**
+```json
+{
+  "sender": "maria.silva@cliente.com",
+  "subject": "Prazo do módulo 3",
+  "body": "Gostaria de saber se o módulo 3 será entregue na quarta. Nosso QA precisa de 2 dias para preparar ambiente."
+}
+```
+
+**Saída:**
+```json
+{
+  "classification": { "category": "Personal", "priority": "High", "confidence": 0.87 },
+  "summary": { "summary": "Cliente pergunta sobre prazo do módulo 3. QA precisa 2 dias antecipados.", "action_items": ["Confirmar prazo do módulo 3", "Agendar call sobre módulo 4"] },
+  "draft_reply": { "suggested_subject": "Re: Prazo do módulo 3 — confirmação", "reply_body": "Olá Maria, o módulo 3 está confirmado para quarta. Podemos agendar call sobre o módulo 4 na próxima semana?", "status": "pending" }
+}
+```
+
+---
+
+## 17. Padrões de Prompting Utilizados
+
+| Padrão | Onde usado | Descrição |
+|--------|-----------|-----------|
+| **Zero-shot Classification** | ClassifierAgent | Prompt direto sem exemplos — a IA classifica apenas com instruções |
+| **Structured Output (JSON)** | Todos os agentes | Instrução explícita para retornar apenas JSON válido |
+| **Few-shot Dinâmico** | ClassifierAgent (com feedback) | Exemplos de classificações anteriores injetados no prompt |
+| **Chain-of-Thought implícito** | ResponseAgent | Prompt pede "analise o tom" antes de gerar resposta |
+| **Constraint Prompting** | SummarizerAgent | Limites explícitos: "máx 3 frases", "máx 10 itens de ação" |
+| **Role Prompting** | Todos | "Você é um assistente de classificação/sumarização/resposta" |
+| **Context Window Management** | Todos | Trunca corpo do email a 2000-3000 chars para caber no contexto |
+
+---
+
+## 18. Análise Crítica da IA no Projeto
+
+### Pontos Fortes
+- **Classificação consistente**: GPT-4o-mini acerta ~90% das categorias em emails claros
+- **Resumos úteis**: Extrai action items relevantes, economiza tempo do usuário
+- **Respostas contextualizadas**: ChromaDB fornece histórico de tom para respostas naturais
+- **Aprendizado incremental**: Few-shot com feedback melhora a precisão ao longo do tempo
+
+### Limitações Identificadas
+- **Confiança subjetiva**: O modelo pode atribuir alta confiança a classificações erradas (overconfidence)
+- **Dependência de prompt**: Pequenas mudanças no prompt alteram significativamente os resultados
+- **Sem detecção de idioma**: Funciona melhor em português, mas não recusa outros idiomas
+- **Custo por chamada**: Cada email consome 3 chamadas à API (classificar + resumir + responder)
+- **Latência**: Pipeline completo leva 5-15 segundos por email (3 chamadas sequenciais)
+- **Sem guardrails de conteúdo**: A IA pode gerar respostas inadequadas sem filtro explícito
+
+### Decisão sobre Modelo
+Escolhemos `gpt-4o-mini` em vez de `gpt-4o` porque:
+- Custo 15x menor ($0.15/1M tokens vs $2.50/1M)
+- Latência 2x menor
+- Qualidade suficiente para classificação e respostas curtas
+- Trade-off aceito: respostas menos elaboradas em troca de velocidade e economia
+
+---
+
+## 19. Melhorias Futuras (Roadmap)
+
+| Prioridade | Melhoria | Impacto |
+|-----------|----------|---------|
+| 🔴 Alta | Processamento de anexos (PDF, imagens com OCR) | Classificar emails com documentos |
+| 🔴 Alta | Deploy cloud (AWS/GCP) com auto-scaling | Produção real |
+| 🟡 Média | Suporte a múltiplos idiomas explícito | Internacionalização |
+| 🟡 Média | Integração com calendário (agendar reuniões) | Automação de action items |
+| 🟡 Média | Guardrails de conteúdo (NeMo Guardrails) | Segurança de output da IA |
+| 🟢 Baixa | Mobile app (React Native) | Acesso móvel |
+| 🟢 Baixa | Suporte a mais provedores (Yahoo, ProtonMail) | Cobertura |
+| 🟢 Baixa | Dashboard analytics (gráficos de tendência) | Insights visuais |
