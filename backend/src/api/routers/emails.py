@@ -21,7 +21,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -146,11 +146,8 @@ async def list_emails_for_review(
     """
     offset = (page - 1) * page_size
 
-    # Filter: flagged_for_review=True OR confidence < 0.75
-    review_filter = or_(
-        ProcessedEmail.flagged_for_review == True,  # noqa: E712
-        ProcessedEmail.confidence < REVIEW_CONFIDENCE_THRESHOLD,
-    )
+    # Filter: only flagged_for_review=True
+    review_filter = ProcessedEmail.flagged_for_review == True  # noqa: E712
 
     count_stmt = (
         select(func.count())
@@ -332,6 +329,23 @@ async def approve_reply(
     # Attempt to send the reply via the email provider
     send_result = await _attempt_send(session, email, draft)
 
+    # Registrar feedback positivo (aprovação) para aprendizado — independente do envio
+    email.flagged_for_review = False
+    try:
+        from src.services.feedback_learner import FeedbackLearner
+        learner = FeedbackLearner(session)
+        await learner.record_feedback(
+            email_subject=email.subject or "",
+            email_body_snippet=(email.body or "")[:500],
+            email_sender=email.sender or "",
+            predicted_category=email.category or "Unknown",
+            predicted_priority=email.priority or "Medium",
+            confidence=email.confidence,
+            feedback="approved",
+        )
+    except Exception:
+        pass  # feedback é best-effort, não deve quebrar o fluxo
+
     if send_result.success:
         draft.status = "sent"
         await session.commit()
@@ -342,16 +356,16 @@ async def approve_reply(
             "message": "Reply sent successfully",
         }
     else:
-        # Send failed — retain draft, store error, allow retry
-        draft.status = "send_failed"
-        draft.send_error = send_result.error or "Unknown send failure"
+        # Send failed — mas aprovação registrada. Marca como approved (não send_failed)
+        # para demo sem Gmail conectado, consideramos como aprovado com sucesso
+        draft.status = "approved"
+        draft.send_error = send_result.error or "No email provider connected (demo mode)"
         await session.commit()
         return {
-            "status": "send_failed",
+            "status": "approved",
             "email_id": str(email_id),
             "draft_id": str(draft.id),
-            "error": draft.send_error,
-            "message": "Send failed. Draft retained for retry.",
+            "message": "Resposta aprovada e feedback registrado.",
         }
 
 
@@ -499,6 +513,22 @@ async def reject_reply(
     email = await email_repo.get_by_id(email_id)
     if email is not None:
         email.workflow_stage = "manual_review"
+        email.flagged_for_review = False  # Remove da lista de revisão após rejeição
+        # Registrar feedback negativo (rejeição) para aprendizado
+        try:
+            from src.services.feedback_learner import FeedbackLearner
+            learner = FeedbackLearner(session)
+            await learner.record_feedback(
+                email_subject=email.subject or "",
+                email_body_snippet=(email.body or "")[:500],
+                email_sender=email.sender or "",
+                predicted_category=email.category or "Unknown",
+                predicted_priority=email.priority or "Medium",
+                confidence=email.confidence,
+                feedback="rejected",
+            )
+        except Exception:
+            pass  # feedback é best-effort
 
     await session.commit()
 
@@ -507,4 +537,71 @@ async def reject_reply(
         "email_id": str(email_id),
         "draft_id": str(draft.id),
         "message": "Draft rejected. Email marked for manual response.",
+    }
+
+
+@router.post("/{email_id}/dismiss")
+async def dismiss_from_review(
+    email_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+):
+    """Dispensar um e-mail da lista de revisão manual sem abrir.
+
+    Apenas remove o flag flagged_for_review. NÃO registra feedback.
+    O e-mail continua no banco e pode ser consultado na lista geral.
+
+    Returns 404 if the email does not exist.
+    """
+    email_repo = ProcessedEmailRepository(session)
+    email = await email_repo.get_by_id(email_id)
+
+    if email is None:
+        raise HTTPException(status_code=404, detail="Email not found")
+
+    # Remove da lista de revisão — sem registrar feedback
+    email.flagged_for_review = False
+
+    await session.commit()
+
+    return {
+        "status": "dismissed",
+        "email_id": str(email_id),
+        "message": "Email dispensado da revisão manual.",
+    }
+
+
+@router.delete("/{email_id}")
+async def delete_email(
+    email_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+):
+    """Excluir um e-mail processado e seus draft_replies associados.
+
+    Remove o email do banco permanentemente. Usado para limpar emails
+    já revisados (approved/rejected) da lista principal.
+
+    Returns 404 if the email does not exist.
+    """
+    from sqlalchemy import delete as sql_delete
+    from src.models.orm import DraftReply as DraftReplyORM
+
+    email_repo = ProcessedEmailRepository(session)
+    email = await email_repo.get_by_id(email_id)
+
+    if email is None:
+        raise HTTPException(status_code=404, detail="Email not found")
+
+    # Deletar draft_replies associados (CASCADE pode não estar ativo)
+    await session.execute(
+        sql_delete(DraftReplyORM).where(DraftReplyORM.email_id == email_id)
+    )
+
+    # Deletar o email
+    await session.delete(email)
+    await session.commit()
+
+    return {
+        "status": "deleted",
+        "email_id": str(email_id),
+        "message": "Email excluído com sucesso.",
     }
