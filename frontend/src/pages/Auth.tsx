@@ -1,6 +1,6 @@
 /**
- * Auth page — allows user to enter and persist their API key.
- * Validates key format (non-empty) and redirects to dashboard on success.
+ * Auth page — página de login com API Key.
+ * Interface em português com design moderno.
  */
 
 import { useState, type FormEvent } from 'react'
@@ -17,7 +17,7 @@ export function Auth() {
     e.preventDefault()
     const trimmed = key.trim()
     if (!trimmed) {
-      setError('Please enter a valid API key.')
+      setError('Por favor, insira uma chave API válida.')
       return
     }
     login(trimmed)
@@ -27,14 +27,18 @@ export function Auth() {
   return (
     <div className="auth-page">
       <div className="auth-card">
-        <h1>🔑 Sign In</h1>
-        <p>Enter your API key to access the AI Email Agent dashboard.</p>
+        <div className="auth-logo">🤖</div>
+        <h1>AI Email Agent</h1>
+        <p className="auth-subtitle">Sistema Inteligente de Gestão de E-mails</p>
+        <p className="auth-description">
+          Insira sua chave de API para acessar o painel de controle.
+        </p>
 
         <form onSubmit={handleSubmit} className="auth-form">
           {error && <div className="error-message">{error}</div>}
 
           <div className="form-field">
-            <label htmlFor="api-key">API Key</label>
+            <label htmlFor="api-key">Chave de API</label>
             <input
               id="api-key"
               type="password"
@@ -43,16 +47,28 @@ export function Auth() {
                 setKey(e.target.value)
                 setError(null)
               }}
-              placeholder="Enter your API key"
+              placeholder="Insira sua chave de API"
               autoFocus
               className="auth-input"
             />
           </div>
 
           <button type="submit" className="btn btn-primary auth-btn">
-            Continue
+            Entrar
           </button>
         </form>
+
+        <div className="auth-features">
+          <div className="auth-feature">
+            <span>📧</span> Classificação automática de e-mails
+          </div>
+          <div className="auth-feature">
+            <span>🤖</span> Respostas geradas por IA
+          </div>
+          <div className="auth-feature">
+            <span>🧠</span> Aprendizado contínuo com feedback
+          </div>
+        </div>
       </div>
     </div>
   )

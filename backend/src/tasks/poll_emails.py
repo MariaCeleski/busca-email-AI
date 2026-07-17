@@ -206,22 +206,27 @@ def _create_provider_client(account) -> "EmailProviderClient | None":
 
     if account.provider == "gmail":
         from src.providers.gmail import GmailClient
+        from src.security.encryption import TokenEncryptionService
+
+        enc = TokenEncryptionService()
+        access = enc.decrypt(account.encrypted_access_token) if account.encrypted_access_token else ""
+        refresh = enc.decrypt(account.encrypted_refresh_token) if account.encrypted_refresh_token else None
 
         return GmailClient(
-            access_token=account.encrypted_access_token,
-            refresh_token=account.encrypted_refresh_token,
-            client_id=settings.google_client_id,
-            client_secret=settings.google_client_secret,
+            access_token=access,
+            refresh_token=refresh,
         )
     elif account.provider == "microsoft":
         from src.providers.microsoft import MicrosoftGraphClient
+        from src.security.encryption import TokenEncryptionService
+
+        enc = TokenEncryptionService()
+        access = enc.decrypt(account.encrypted_access_token) if account.encrypted_access_token else ""
+        refresh = enc.decrypt(account.encrypted_refresh_token) if account.encrypted_refresh_token else None
 
         return MicrosoftGraphClient(
-            access_token=account.encrypted_access_token,
-            refresh_token=account.encrypted_refresh_token,
-            client_id=settings.microsoft_client_id,
-            client_secret=settings.microsoft_client_secret,
-            tenant_id=settings.microsoft_tenant_id,
+            access_token=access,
+            refresh_token=refresh,
         )
     else:
         return None

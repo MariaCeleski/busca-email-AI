@@ -53,6 +53,8 @@ export interface DraftReply {
   referenced_email_ids: string[]
   status: DraftStatus
   generated_at: string
+  edited_body?: string | null
+  edited_subject?: string | null
 }
 
 export interface EmailProcessingResult {
