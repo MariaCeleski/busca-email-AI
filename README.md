@@ -373,15 +373,68 @@ Copie `backend/.env.example` para `backend/.env` e preencha:
 
 ## 17. Padrões de Prompting Utilizados
 
-| Padrão | Onde usado | Descrição |
-|--------|-----------|-----------|
-| **Zero-shot Classification** | ClassifierAgent | Prompt direto sem exemplos — a IA classifica apenas com instruções |
-| **Structured Output (JSON)** | Todos os agentes | Instrução explícita para retornar apenas JSON válido |
-| **Few-shot Dinâmico** | ClassifierAgent (com feedback) | Exemplos de classificações anteriores injetados no prompt |
-| **Chain-of-Thought implícito** | ResponseAgent | Prompt pede "analise o tom" antes de gerar resposta |
-| **Constraint Prompting** | SummarizerAgent | Limites explícitos: "máx 3 frases", "máx 10 itens de ação" |
-| **Role Prompting** | Todos | "Você é um assistente de classificação/sumarização/resposta" |
-| **Context Window Management** | Todos | Trunca corpo do email a 2000-3000 chars para caber no contexto |
+### Tabela de Padrões
+
+| Padrão | Tipo | Onde usado | Verificável em |
+|--------|------|-----------|----------------|
+| **Role-based** | Estruturado | Todos os agentes | `classifier.py`, `summarizer.py`, `response.py` |
+| **Few-shot Dinâmico** | Com exemplos | ClassifierAgent | `classifier.py` + `feedback_learner.py` |
+| **Chain-of-Thought** | Iterativo | ResponseAgent | `response.py` (analisa tom → gera resposta) |
+| **Constraint Prompting** | Com restrições | SummarizerAgent | `summarizer.py` (máx 3 frases, máx 10 itens) |
+| **Structured Output** | Estruturado | Todos | Instrução "Retorne APENAS JSON" |
+| **Context Window Management** | Com restrições | Todos | Trunca a 2000-3000 chars |
+
+### Evidência 1: Role-based Prompting (classifier.py)
+
+```python
+# Prompt real do ClassifierAgent — linha 108
+"Você é um assistente de classificação de e-mails. Analise o e-mail a seguir e classifique-o."
+```
+
+O agente recebe um **papel explícito** ("assistente de classificação") que define seu comportamento.
+
+### Evidência 2: Few-shot Dinâmico (classifier.py + feedback_learner.py)
+
+```python
+# FeedbackLearner.build_few_shot_section() — injeta exemplos reais no prompt
+"Exemplos de classificações anteriores com feedback do usuário:
+  1. Assunto: 'Reunião urgente' | De: chefe@empresa.com
+     Classificação: Urgent/High — ✓ aprovada
+  2. Assunto: 'GANHE DINHEIRO' | De: spam@xyz.com
+     Classificação: Spam/Low — ✓ aprovada
+Use esses exemplos como referência."
+```
+
+Exemplos **reais** do histórico de feedback são injetados dinamicamente a cada classificação.
+
+### Evidência 3: Chain-of-Thought (response.py)
+
+```python
+# ResponseAgent.build_response_prompt() — análise antes da geração
+"Orientação de tom baseada em e-mails históricos (imite este estilo):
+- Estilo de saudação: Olá [Nome]
+- Estilo de despedida: Atenciosamente
+- Comprimento médio de frase: ~12 palavras
+Adote a estrutura... dos exemplos históricos."
+
+# Depois pede a geração:
+"Gere uma resposta profissional para o e-mail a seguir."
+```
+
+O prompt força o modelo a **primeiro analisar o contexto** (tom, estilo) e **depois gerar** a resposta — raciocínio em etapas.
+
+### Evidência 4: Constraint Prompting (summarizer.py)
+
+```python
+# SummarizerAgent.build_summary_prompt() — restrições explícitas
+"Regras:
+- O resumo deve ter no máximo 3 frases
+- Extraia até 10 itens de ação
+- Se não houver itens de ação, retorne uma lista vazia
+- Preserve detalhes críticos incluindo datas, valores e nomes"
+```
+
+Limites quantitativos explícitos que **restringem** a saída do modelo.
 
 ---
 
