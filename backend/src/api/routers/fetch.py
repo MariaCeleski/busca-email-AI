@@ -282,13 +282,28 @@ Retorne APENAS JSON:
                         reply_body = parsed.get("reply_body", "Obrigado pelo contato.")
                         suggested_subject = parsed.get("suggested_subject", f"Re: {email_data['subject']}")[:150]
 
-                        # Inserir draft_reply no banco com status='pending'
+                        # --- Guardrails: validar resposta antes de salvar ---
+                        from src.services.guardrails import validate_response
+                        guardrail_check = validate_response(reply_body)
+
+                        draft_status = "pending"
+                        if not guardrail_check.is_safe:
+                            # Resposta insegura → marca para revisão obrigatória
+                            logger.warning(
+                                "Guardrail flagged reply for '%s': %s",
+                                email_data["subject"],
+                                guardrail_check.message,
+                            )
+                            # Adiciona aviso no corpo para o revisor humano ver
+                            reply_body = f"⚠️ GUARDRAIL: {guardrail_check.message}\n\n---\n\n{reply_body}"
+
+                        # Inserir draft_reply no banco
                         draft = DraftReplyORM(
                             email_id=email_record.id,
                             reply_body=reply_body,
                             suggested_subject=suggested_subject,
                             referenced_email_ids=[],
-                            status="pending",
+                            status=draft_status,
                             generated_at=datetime.utcnow(),
                         )
                         session2.add(draft)
