@@ -2,8 +2,8 @@
 
 Sistema inteligente que automatiza a triagem, classificação, resumo e geração de respostas para e-mails usando agentes de IA orquestrados com **LangGraph**.
 
-Link dos slides: https://canva.link/2wtiha5ig6v78sf
-Link do projeto no Github: https://github.com/MariaCeleski/busca-email-AI/tree/develop
+### Link dos slides: https://canva.link/2wtiha5ig6v78sf
+### Link do projeto no Github: https://github.com/MariaCeleski/busca-email-AI/tree/develop
 ---
 
 ## 1. Problema
