@@ -2,6 +2,7 @@
 
 Sistema inteligente que automatiza a triagem, classificação, resumo e geração de respostas para e-mails usando agentes de IA orquestrados com **LangGraph**.
 
+Link dos slides: https://canva.link/2wtiha5ig6v78sf
 ---
 
 ## 1. Problema
