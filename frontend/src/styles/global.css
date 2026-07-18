@@ -46,13 +46,19 @@ body {
   background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
   color: #fff;
   padding: 0.75rem 2rem;
-  display: flex;
-  align-items: center;
-  gap: 2rem;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
   position: sticky;
   top: 0;
   z-index: 100;
+}
+
+.navbar-inner {
+  display: flex;
+  align-items: center;
+  gap: 2rem;
+  max-width: 1400px;
+  margin: 0 auto;
+  width: 100%;
 }
 
 .nav-brand {
@@ -1316,7 +1322,8 @@ td {
 
 /* Responsive */
 @media (max-width: 768px) {
-  .navbar { flex-direction: column; gap: 0.75rem; padding: 0.75rem 1rem; }
+  .navbar { padding: 0.75rem 1rem; }
+  .navbar-inner { flex-direction: column; gap: 0.75rem; }
   .nav-links { flex-wrap: wrap; justify-content: center; }
   .main-content { padding: 1rem; }
   .page-header { flex-direction: column; align-items: flex-start; }
