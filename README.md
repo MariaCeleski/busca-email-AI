@@ -106,6 +106,11 @@ Este sistema é um agente porque:
 - Timeout por agente (Classificador: 10s, Sumarizador: 8s, Resposta: 15s)
 - Confiança limitada ao range [0.0, 1.0]
 - Middleware de autenticação por API Key
+- **Guardrails de conteúdo** (`backend/src/services/guardrails.py`):
+  - Filtra termos ofensivos (PT + EN)
+  - Detecta dados sensíveis via regex (CPF, CNPJ, cartão de crédito, senhas, API keys)
+  - Identifica frases inadequadas para tom profissional
+  - Respostas sinalizadas recebem prefixo `⚠️ GUARDRAIL` para revisão humana
 
 ---
 

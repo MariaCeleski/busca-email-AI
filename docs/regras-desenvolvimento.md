@@ -64,9 +64,23 @@ Quando houver mais de uma forma de resolver, apresentar opções ao usuário.
 ## Regra 7: Dados de Demonstração
 
 - O endpoint `/api/v1/emails/demo` executa o pipeline completo
-- Pipeline: Classificar → Resumir → Gerar Resposta (draft_reply)
+- Pipeline: Classificar → Resumir → Gerar Resposta (draft_reply) → **Guardrails**
 - Emails demo devem cobrir todas as categorias e prioridades
 - Spam deve ter confiança baixa (35-65%) para testar revisão manual
+- Respostas geradas passam por validação de guardrails antes de salvar
+
+---
+
+## Regra 7.1: Guardrails de Conteúdo
+
+- Arquivo: `backend/src/services/guardrails.py`
+- Valida respostas da IA em 3 níveis:
+  1. **Termos ofensivos** — lista de palavras proibidas (PT + EN)
+  2. **Dados sensíveis** — regex para CPF, CNPJ, cartão, senhas, API keys
+  3. **Frases inadequadas** — expressões que não cabem em tom profissional
+- Se detectar problema: adiciona prefixo `⚠️ GUARDRAIL:` na resposta
+- A resposta NÃO é bloqueada — é sinalizada para revisão humana
+- Sem custo extra de API (validação local por lista/regex)
 
 ---
 
@@ -194,3 +208,6 @@ style(css): melhorar responsividade do dashboard
 - Commits devem ser atômicos (1 mudança = 1 commit)
 - Não commitar `.env` (está no `.gitignore`)
 - Mensagens em português ou inglês, mas consistentes dentro da branch
+
+### Analise de requisitos
+Analise a aplicação, analise o github e revise ambos, faça um diagnoóstico e verifique se os critérios estão de acordo com as exigências cobradas,  os requisitos se encontram em o arquivo conformidade-criterios.md 

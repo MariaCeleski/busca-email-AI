@@ -219,3 +219,57 @@ else:
 | **DRY** | FeedbackLearner reutilizado em approve/reject |
 | **Clean Code** | Nomes descritivos em português, comentários explicativos |
 | **Graceful Degradation** | Funciona sem Gmail, sem ChromaDB, sem Celery |
+
+
+---
+
+## Implementação 5: Guardrails de Conteúdo
+
+### Motivação Técnica
+- A IA pode gerar respostas com conteúdo ofensivo, dados sensíveis ou tom inadequado
+- Sem validação, respostas problemáticas chegam diretamente ao usuário
+- Princípio: **Defense in Depth** — múltiplas camadas de validação
+
+### Prompt Utilizado
+> "Implementar guardrails básico — validar se resposta gerada não contém conteúdo inadequado. Validação por palavras proibidas."
+
+### Implementação
+
+```python
+# backend/src/services/guardrails.py
+
+OFFENSIVE_TERMS = ["idiota", "imbecil", "merda", ...]
+SENSITIVE_PATTERNS = [
+    r'\b\d{3}\.\d{3}\.\d{3}-\d{2}\b',  # CPF
+    r'\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b',  # Cartão
+]
+INAPPROPRIATE_PHRASES = ["dane-se", "problema seu", ...]
+
+def validate_response(text: str) -> GuardrailResult:
+    # 1. Verifica termos ofensivos
+    # 2. Verifica dados sensíveis (regex)
+    # 3. Verifica frases inadequadas
+    # Retorna: is_safe, flagged_terms, category, message
+```
+
+### Integração no Pipeline
+
+```python
+# fetch.py — após gerar resposta
+from src.services.guardrails import validate_response
+guardrail_check = validate_response(reply_body)
+
+if not guardrail_check.is_safe:
+    reply_body = f"⚠️ GUARDRAIL: {guardrail_check.message}\n\n---\n\n{reply_body}"
+```
+
+### Princípios Aplicados
+- **Defense in Depth**: guardrails + human-in-the-loop + feedback
+- **Fail Safe**: resposta sinalizada, não bloqueada (humano decide)
+- **Zero custo extra**: validação local sem chamada de API adicional
+
+### Impacto
+- 3 níveis de validação (ofensivo, sensível, inadequado)
+- 0 chamadas extras à API
+- 0 funcionalidades existentes quebradas
+- Branch: `develop` (commit `7bde31f`)

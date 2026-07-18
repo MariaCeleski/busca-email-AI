@@ -95,6 +95,7 @@
 | `.env.example` sem valores reais | ✅ | Apenas nomes de variáveis |
 | `.gitignore` configurado | ✅ | Ignora .env, .venv, node_modules, __pycache__ |
 | Tokens encriptados | ✅ | AES-256 (`TokenEncryptionService`) |
+| Guardrails de conteúdo | ✅ | `backend/src/services/guardrails.py` — valida respostas da IA |
 
 ---
 

@@ -15,7 +15,7 @@
 | 4 | **Ideia do projeto e apresentação** | ✅ Conforme | `docs/apresentacao-sala-de-aula.md`, `docs/slides-apresentacao.md`, `docs/apresentacao.html` |
 | 5 | **Implementação do agente com LangGraph** | ✅ Conforme | `orchestrator.py` usa `langgraph.graph.StateGraph` com nós, edges condicionais, estado tipado |
 | 6 | **Uso de ferramenta integrada ao agente** | ✅ Conforme | 5 ferramentas: OpenAI API, Gmail API, ChromaDB, PostgreSQL, Redis/Celery |
-| 7 | **Cuidados básicos de segurança** | ✅ Conforme | `.gitignore`, `.env.example`, AES-256, Pydantic validation, timeouts, auth middleware |
+| 7 | **Cuidados básicos de segurança** | ✅ Conforme | `.gitignore`, `.env.example`, AES-256, Pydantic validation, timeouts, auth middleware, **guardrails de conteúdo** |
 | 8 | **Contexto, memória e validação básica** | ✅ Conforme | Estado LangGraph, FeedbackLearner (few-shot), ChromaDB (busca semântica), Pydantic |
 | 9 | **Uso do GitHub e colaboração** | ✅ Conforme | CI/CD (GitHub Actions), 17 branches, PRs, repositório público acessível |
 
