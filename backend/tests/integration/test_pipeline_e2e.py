@@ -445,7 +445,7 @@ class TestFullPipelineEndToEnd:
 
         # Verify pipeline marked as failed after summarizer retries exhausted
         assert result["current_stage"] == WorkflowStage.FAILED.value
-        assert "summarizer" in result["error"]
+        assert "Summarization failed after 3 retries" in result["error"]
 
         # Verify summarizer was retried 3 times
         assert mock_summarizer.summarize.call_count == 3
