@@ -28,6 +28,8 @@ from __future__ import annotations
 import asyncio
 import logging
 from typing import Dict, Optional
+import httpx
+from datetime import datetime
 
 from typing_extensions import TypedDict
 
@@ -36,6 +38,7 @@ from langgraph.graph import END, StateGraph
 from src.agents.classifier import ClassifierAgent
 from src.agents.response import ResponseAgent
 from src.agents.summarizer import SummarizerAgent
+from src.config import get_settings
 from src.models.classification import ClassificationResult
 from src.models.draft import DraftReply
 from src.models.email import RawEmail
@@ -155,6 +158,7 @@ def build_email_workflow(
     response_agent: ResponseAgent,
     max_retries: int = 3,
     hard_timeout: int = 30,
+    orchestrator=None,
 ) -> StateGraph:
     """Construct a LangGraph StateGraph for the email processing pipeline.
 
@@ -202,6 +206,14 @@ def build_email_workflow(
                 ):
                     needs_dual = True
 
+                # Trigger webhook for agent completion
+                if orchestrator:
+                    await orchestrator._trigger_webhook(
+                        "agent_completed",
+                        {"classification": result.model_dump(mode='json'), "confidence": result.confidence},
+                        agent_name="classifier"
+                    )
+
                 return {
                     "classification": result,
                     "current_stage": WorkflowStage.CLASSIFYING.value,
@@ -218,6 +230,13 @@ def build_email_workflow(
                     exc,
                 )
                 if attempt == max_retries:
+                    # Trigger error webhook
+                    if orchestrator:
+                        await orchestrator._trigger_webhook(
+                            "error_occurred",
+                            {"email": email.model_dump(mode='json')},
+                            error_info=f"Classification failed after {max_retries} retries: {exc}"
+                        )
                     return {
                         "classification": None,
                         "current_stage": WorkflowStage.FAILED.value,
@@ -240,6 +259,15 @@ def build_email_workflow(
                     summarizer.summarize(email),
                     timeout=hard_timeout,
                 )
+
+                # Trigger webhook for agent completion
+                if orchestrator:
+                    await orchestrator._trigger_webhook(
+                        "agent_completed",
+                        {"summary": result.model_dump(mode='json')},
+                        agent_name="summarizer"
+                    )
+
                 return {
                     "summary": result,
                     "current_stage": WorkflowStage.SUMMARIZING.value,
@@ -254,6 +282,13 @@ def build_email_workflow(
                     exc,
                 )
                 if attempt == max_retries:
+                    # Trigger error webhook
+                    if orchestrator:
+                        await orchestrator._trigger_webhook(
+                            "error_occurred",
+                            {"email": email.model_dump(mode='json')},
+                            error_info=f"Summarization failed after {max_retries} retries: {exc}"
+                        )
                     return {
                         "summary": None,
                         "current_stage": WorkflowStage.FAILED.value,
@@ -281,6 +316,15 @@ def build_email_workflow(
                     response_agent.generate_reply(email, classification),
                     timeout=hard_timeout,
                 )
+
+                # Trigger webhook for agent completion
+                if orchestrator:
+                    await orchestrator._trigger_webhook(
+                        "agent_completed",
+                        {"draft_reply": result.model_dump(mode='json')},
+                        agent_name="response_agent"
+                    )
+
                 return {
                     "draft_reply": result,
                     "current_stage": WorkflowStage.GENERATING_REPLY.value,
@@ -295,6 +339,13 @@ def build_email_workflow(
                     exc,
                 )
                 if attempt == max_retries:
+                    # Trigger error webhook
+                    if orchestrator:
+                        await orchestrator._trigger_webhook(
+                            "error_occurred",
+                            {"email": email.model_dump(mode='json'), "classification": classification.model_dump(mode='json')},
+                            error_info=f"Response generation failed after {max_retries} retries: {exc}"
+                        )
                     return {
                         "draft_reply": None,
                         "current_stage": WorkflowStage.FAILED.value,
@@ -320,6 +371,17 @@ def build_email_workflow(
             stage = WorkflowStage.MANUAL_REVIEW.value
         else:
             stage = WorkflowStage.COMPLETED.value
+
+        # Trigger final webhook for email processing completion
+        if orchestrator and stage == WorkflowStage.COMPLETED.value:
+            email_data = {
+                "email": state.get("email").model_dump(mode='json') if state.get("email") else {},
+                "classification": state.get("classification").model_dump(mode='json') if state.get("classification") else {},
+                "summary": state.get("summary").model_dump(mode='json') if state.get("summary") else {},
+                "draft_reply": state.get("draft_reply").model_dump(mode='json') if state.get("draft_reply") else {},
+                "stage": stage
+            }
+            await orchestrator._trigger_webhook("email_processed", email_data)
 
         return {"current_stage": stage}
 
@@ -384,6 +446,7 @@ class AgentOrchestrator:
     - 30-second hard timeout per agent execution
     - Concurrent processing of up to max_concurrent simultaneous emails
     - Isolated state per email
+    - Webhook integration for low-code automation platforms
     """
 
     def __init__(
@@ -401,10 +464,11 @@ class AgentOrchestrator:
         self._max_retries = max_retries
         self._hard_timeout = hard_timeout
         self._semaphore = asyncio.Semaphore(max_concurrent)
+        self._settings = get_settings()
 
         # Build the workflow graph
         self._workflow = build_email_workflow(
-            classifier, summarizer, response_agent, max_retries, hard_timeout
+            classifier, summarizer, response_agent, max_retries, hard_timeout, self
         )
         self._compiled = self._workflow.compile()
 
@@ -473,6 +537,102 @@ class AgentOrchestrator:
         state["error"] = f"Agent {agent_name} failed after retries exhausted"
         state["current_stage"] = WorkflowStage.FAILED.value
         return state
+
+    async def _trigger_webhook(
+        self, 
+        event_type: str, 
+        email_data: Dict, 
+        agent_name: Optional[str] = None,
+        error_info: Optional[str] = None
+    ) -> None:
+        """Trigger webhook notifications for low-code automation platforms.
+        
+        Args:
+            event_type: Type of event (email_processed, agent_completed, error_occurred)
+            email_data: Email processing data
+            agent_name: Name of the agent (for agent_completed events)
+            error_info: Error information (for error_occurred events)
+        """
+        if not self._settings.enable_webhooks:
+            return
+            
+        # Convert any Pydantic models to JSON-serializable dicts
+        def make_serializable(obj):
+            if hasattr(obj, 'model_dump'):
+                return obj.model_dump(mode='json')
+            return obj
+            
+        serializable_data = {}
+        for key, value in email_data.items():
+            serializable_data[key] = make_serializable(value)
+            
+        webhook_payload = {
+            "event_type": event_type,
+            "data": {
+                "email_id": serializable_data.get("email", {}).get("provider_message_id", "unknown"),
+                "timestamp": datetime.utcnow().isoformat(),
+                **serializable_data
+            },
+            "source": "orchestrator",
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+        # Add agent-specific data
+        if agent_name:
+            webhook_payload["data"]["agent_name"] = agent_name
+            
+        # Add error-specific data  
+        if error_info:
+            webhook_payload["data"]["error_type"] = error_info
+            webhook_payload["data"]["component"] = "orchestrator"
+            webhook_payload["data"]["severity"] = "high"
+        
+        # Send to Zapier endpoint (async, non-blocking)
+        asyncio.create_task(self._send_webhook_async(webhook_payload))
+
+    async def _send_webhook_async(self, payload: Dict) -> None:
+        """Send webhook payload asynchronously without blocking main flow."""
+        try:
+            async with httpx.AsyncClient(
+                timeout=self._settings.webhook_timeout_seconds
+            ) as client:
+                # Send to internal webhook endpoint (for Make.com and internal processing)
+                webhook_url = f"{self._settings.webhook_base_url}/api/v1/webhooks/zapier"
+                
+                response = await client.post(
+                    webhook_url,
+                    json=payload,
+                    headers={"X-API-Key": self._settings.api_key}
+                )
+                
+                if response.status_code == 200:
+                    logger.debug(f"Internal webhook sent successfully: {payload['event_type']}")
+                else:
+                    logger.warning(f"Internal webhook failed with status {response.status_code}: {payload['event_type']}")
+                
+                # Send to external Zapier webhook if configured
+                if self._settings.zapier_webhook_url:
+                    await self._send_zapier_webhook(payload, client)
+                    
+        except Exception as exc:
+            logger.warning(f"Failed to send internal webhook for {payload['event_type']}: {exc}")
+
+    async def _send_zapier_webhook(self, payload: Dict, client: httpx.AsyncClient) -> None:
+        """Send webhook to external Zapier endpoint."""
+        try:
+            response = await client.post(
+                self._settings.zapier_webhook_url,
+                json=payload,
+                headers={"Content-Type": "application/json"}
+            )
+            
+            if response.status_code == 200:
+                logger.info(f"Zapier webhook sent successfully: {payload['event_type']}")
+            else:
+                logger.warning(f"Zapier webhook failed with status {response.status_code}: {payload['event_type']}")
+                
+        except Exception as exc:
+            logger.warning(f"Failed to send Zapier webhook for {payload['event_type']}: {exc}")
 
     def _build_result(self, state: EmailWorkflowState) -> Dict:
         """Aggregate results from workflow state into a return dict.
