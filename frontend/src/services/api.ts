@@ -10,7 +10,7 @@ import type {
   EmailFilters,
 } from '../types/email'
 
-const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080'
 
 /**
  * Retrieve the active API key at request time.
@@ -68,7 +68,7 @@ export const api = {
   /**
    * GET /api/v1/emails — paginated email list with optional filters
    */
-  getEmails: (params: GetEmailsParams = {}) => {
+  getEmails: async (params: GetEmailsParams = {}) => {
     const { page = 1, page_size = 20, filters } = params
     const searchParams = new URLSearchParams()
     searchParams.set('page', String(page))
@@ -83,6 +83,12 @@ export const api = {
   },
 
   /**
+   * GET /api/v1/emails/demo — demo data for testing
+   */
+  getDemoEmails: () =>
+    request<PaginatedResponse<EmailProcessingResult>>('/emails/demo'),
+
+  /**
    * GET /api/v1/emails/{id} — single email detail
    */
   getEmailDetail: (id: string) =>
@@ -93,6 +99,14 @@ export const api = {
    */
   getReviewEmails: async () => {
     const data = await request<PaginatedResponse<EmailProcessingResult>>('/emails/review')
+    return data.items
+  },
+
+  /**
+   * GET /api/v1/emails/demo/review — demo review emails for testing
+   */
+  getDemoReviewEmails: async () => {
+    const data = await request<PaginatedResponse<EmailProcessingResult>>('/emails/demo/review')
     return data.items
   },
 

@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     api_host: str = "0.0.0.0"
     api_port: int = 8000
     api_key: str = Field(default="", description="API key for authentication")
-    cors_origins: list[str] = ["http://localhost:3000"]
+    cors_origins: list[str] = ["http://localhost:3000", "http://localhost:3001", "http://localhost:3002"]
 
     # --- Database (PostgreSQL) ---
     database_url: str = Field(
@@ -148,6 +148,23 @@ class Settings(BaseSettings):
     )
     microsoft_tenant_id: str = Field(
         default="common", description="Microsoft Azure AD tenant ID"
+    )
+
+    # --- Webhook Configuration ---
+    enable_webhooks: bool = Field(
+        default=False, description="Enable webhook notifications for low-code integrations"
+    )
+    webhook_base_url: str = Field(
+        default="http://localhost:8001", description="Base URL for webhook endpoints"
+    )
+    webhook_timeout_seconds: int = Field(
+        default=5, description="Timeout for webhook HTTP requests"
+    )
+    zapier_webhook_url: str = Field(
+        default="", description="Zapier webhook URL for external notifications"
+    )
+    make_webhook_url: str = Field(
+        default="", description="Make.com webhook URL for external notifications"
     )
 
     # --- Agent Timeouts ---

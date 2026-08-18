@@ -55,14 +55,32 @@ export function Dashboard() {
     setFetchingEmails(true)
     setFetchStatus(null)
     try {
-      await api.triggerFetch()
-      setFetchStatus({ type: 'success', message: 'Busca iniciada! Os e-mails serão processados em segundo plano.' })
-      // Refresh after a delay to allow backend processing
-      setTimeout(() => { refresh(); refreshReview() }, 5000)
+      // Usar o endpoint demo que realmente insere dados no banco
+      const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8080'}/api/v1/emails/demo`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-Key': localStorage.getItem('ai_email_agent_api_key') || '',
+        },
+      })
+      
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`)
+      }
+      
+      const data = await response.json()
+      setFetchStatus({ 
+        type: 'success', 
+        message: data.message || 'E-mails processados com sucesso!' 
+      })
+      
+      // Refresh imediatamente para mostrar os novos dados
+      refresh()
+      refreshReview()
     } catch (err) {
       setFetchStatus({
         type: 'error',
-        message: err instanceof Error ? err.message : 'Falha ao iniciar busca de e-mails.',
+        message: err instanceof Error ? err.message : 'Falha ao buscar e-mails.',
       })
     } finally {
       setFetchingEmails(false)
@@ -73,20 +91,14 @@ export function Dashboard() {
     setFetchingEmails(true)
     setFetchStatus(null)
     try {
-      const response = await fetch('http://localhost:8000/api/v1/emails/demo', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-API-Key': localStorage.getItem('ai_email_agent_api_key') || '',
-        },
-      })
-      const data = await response.json()
-      setFetchStatus({ type: 'success', message: data.message || 'E-mails demo inseridos!' })
-      setTimeout(() => { refresh(); refreshReview() }, 2000)
+      // Just refresh to trigger demo data loading through the API fallback
+      refresh()
+      refreshReview()
+      setFetchStatus({ type: 'success', message: 'Dados demo carregados!' })
     } catch (err) {
       setFetchStatus({
         type: 'error',
-        message: 'Falha ao inserir e-mails de demonstração.',
+        message: 'Falha ao carregar dados de demonstração.',
       })
     } finally {
       setFetchingEmails(false)

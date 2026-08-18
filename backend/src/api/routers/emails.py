@@ -133,6 +133,144 @@ def _email_to_dict(email: ProcessedEmail, draft: DraftReplyORM | None = None) ->
 
 
 # NOTE: /review must be defined BEFORE /{email_id} to avoid path conflict
+@router.get("/demo")
+async def get_demo_emails():
+    """Get mock demo emails for testing when database is empty."""
+    from datetime import datetime, timezone
+    
+    # Use uma data fixa para consistência (hoje)
+    base_time = datetime(2024, 8, 18, 15, 30, 0, tzinfo=timezone.utc)
+    
+    demo_emails = [
+        {
+            "email_id": "demo-001",
+            "provider_message_id": "gmail_abc123",
+            "sender": "cliente@exemplo.com",
+            "subject": "Urgente: Problema com faturamento",
+            "body": "Olá, estou com um problema na minha conta. A cobrança veio duplicada este mês...",
+            "timestamp": base_time.isoformat(),
+            "processing_timestamp": base_time.isoformat(),
+            "classification": {
+                "category": "Urgent",
+                "priority": "High", 
+                "confidence": 0.95
+            },
+            "summary": {
+                "summary": "Cliente relata cobrança duplicada na fatura mensal",
+                "action_items": ["Verificar faturamento", "Emitir estorno se necessário"],
+                "is_fallback": False
+            },
+            "draft_reply": {
+                "draft_id": "draft-001",
+                "reply_body": "Prezado cliente, obrigado por entrar em contato. Vamos verificar sua conta imediatamente...",
+                "suggested_subject": "Re: Urgente: Problema com faturamento",
+                "status": "pending"
+            },
+            "workflow_stage": "completed",
+            "flagged_for_review": False
+        },
+        {
+            "email_id": "demo-002", 
+            "provider_message_id": "outlook_xyz789",
+            "sender": "suporte@fornecedor.com",
+            "subject": "Reunião de alinhamento - Próxima semana",
+            "body": "Gostaríamos de agendar uma reunião para discutir o andamento do projeto...",
+            "timestamp": base_time.replace(hour=14, minute=15).isoformat(),
+            "processing_timestamp": base_time.replace(hour=14, minute=16).isoformat(),
+            "classification": {
+                "category": "Personal",
+                "priority": "Medium",
+                "confidence": 0.88
+            },
+            "summary": {
+                "summary": "Solicitação de agendamento de reunião sobre projeto",
+                "action_items": ["Verificar agenda", "Propor horários disponíveis"],
+                "is_fallback": False
+            },
+            "draft_reply": {
+                "draft_id": "draft-002",
+                "reply_body": "Olá! Sim, podemos agendar a reunião. Tenho disponibilidade na terça ou quarta...",
+                "suggested_subject": "Re: Reunião de alinhamento - Próxima semana", 
+                "status": "pending"
+            },
+            "workflow_stage": "completed",
+            "flagged_for_review": False
+        },
+        {
+            "email_id": "demo-003",
+            "provider_message_id": "gmail_review123", 
+            "sender": "feedback@sistema.com",
+            "subject": "Classificação automática precisa de revisão",
+            "body": "Este email tem conteúdo ambíguo que o sistema não conseguiu classificar com certeza...",
+            "timestamp": base_time.replace(hour=13, minute=45).isoformat(),
+            "processing_timestamp": base_time.replace(hour=13, minute=47).isoformat(),
+            "classification": {
+                "category": "Informative",
+                "priority": "Low",
+                "confidence": 0.45
+            },
+            "summary": {
+                "summary": "Email com conteúdo ambíguo requer revisão manual",
+                "action_items": ["Revisar classificação", "Ajustar parâmetros"],
+                "is_fallback": True
+            },
+            "draft_reply": None,
+            "workflow_stage": "manual_review",
+            "flagged_for_review": True
+        }
+    ]
+    
+    return {
+        "items": demo_emails,
+        "total": len(demo_emails),
+        "page": 1,
+        "page_size": 20,
+        "total_pages": 1
+    }
+
+
+@router.get("/demo/review")
+async def get_demo_review_emails():
+    """Get mock emails flagged for review."""
+    from datetime import datetime, timezone
+    
+    # Use uma data fixa para consistência
+    review_time = datetime(2024, 8, 18, 12, 15, 0, tzinfo=timezone.utc)
+    
+    review_emails = [
+        {
+            "email_id": "review-001",
+            "provider_message_id": "gmail_review123",
+            "sender": "desconhecido@spam.com", 
+            "subject": "Classificação duvidosa - Revisar",
+            "body": "Este é um email que o sistema não conseguiu classificar corretamente...",
+            "timestamp": review_time.isoformat(),
+            "processing_timestamp": review_time.replace(minute=17).isoformat(),
+            "classification": {
+                "category": "Spam", 
+                "priority": "Low",
+                "confidence": 0.35
+            },
+            "summary": {
+                "summary": "Email com baixa confiança na classificação", 
+                "action_items": ["Revisar manualmente"],
+                "is_fallback": True
+            },
+            "draft_reply": None,
+            "workflow_stage": "manual_review",
+            "flagged_for_review": True
+        }
+    ]
+    
+    return {
+        "items": review_emails,
+        "total": len(review_emails),
+        "page": 1, 
+        "page_size": 20,
+        "total_pages": 1
+    }
+
+
 @router.get("/review")
 async def list_emails_for_review(
     page: int = Query(1, ge=1),
