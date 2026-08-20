@@ -13,7 +13,6 @@ import { ReviewSection } from '../components/ReviewSection'
 import { FilterBar } from '../components/FilterBar'
 import { Pagination } from '../components/Pagination'
 import { StatsCards } from '../components/StatsCards'
-import { api } from '../services/api'
 
 const DEFAULT_PAGE_SIZE = 20
 const MAX_PAGE_SIZE = 50
