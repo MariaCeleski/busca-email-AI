@@ -1,8 +1,6 @@
 /**
- * Dashboard page — paginated email list with filters.
- * Displays emails flagged for manual review (confidence < 0.75)
- * in a distinct visual section above the main email list.
- * Max 50 emails per page, configurable page size (default 20).
+ * Dashboard page — painel principal com estatísticas, lista de emails e ações.
+ * Exibe cards de resumo, emails pendentes de revisão e lista paginada.
  *
  * Requirements: 7.1, 7.2, 7.8
  */
@@ -14,6 +12,8 @@ import { EmailList } from '../components/EmailList'
 import { ReviewSection } from '../components/ReviewSection'
 import { FilterBar } from '../components/FilterBar'
 import { Pagination } from '../components/Pagination'
+import { StatsCards } from '../components/StatsCards'
+import { api } from '../services/api'
 
 const DEFAULT_PAGE_SIZE = 20
 const MAX_PAGE_SIZE = 50
@@ -21,6 +21,8 @@ const PAGE_SIZE_OPTIONS = [10, 20, 30, 50]
 
 export function Dashboard() {
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE)
+  const [fetchingEmails, setFetchingEmails] = useState(false)
+  const [fetchStatus, setFetchStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
 
   const {
     emails,
@@ -49,56 +51,152 @@ export function Dashboard() {
     }
   })
 
+  const handleFetchEmails = async () => {
+    setFetchingEmails(true)
+    setFetchStatus(null)
+    try {
+      // Usar o endpoint demo que realmente insere dados no banco
+      const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8080'}/api/v1/emails/demo`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-Key': localStorage.getItem('ai_email_agent_api_key') || '',
+        },
+      })
+      
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`)
+      }
+      
+      const data = await response.json()
+      setFetchStatus({ 
+        type: 'success', 
+        message: data.message || 'E-mails processados com sucesso!' 
+      })
+      
+      // Refresh imediatamente para mostrar os novos dados
+      refresh()
+      refreshReview()
+    } catch (err) {
+      setFetchStatus({
+        type: 'error',
+        message: err instanceof Error ? err.message : 'Falha ao buscar e-mails.',
+      })
+    } finally {
+      setFetchingEmails(false)
+    }
+  }
+
+  const handleDemoEmails = async () => {
+    setFetchingEmails(true)
+    setFetchStatus(null)
+    try {
+      // Just refresh to trigger demo data loading through the API fallback
+      refresh()
+      refreshReview()
+      setFetchStatus({ type: 'success', message: 'Dados demo carregados!' })
+    } catch (err) {
+      setFetchStatus({
+        type: 'error',
+        message: 'Falha ao carregar dados de demonstração.',
+      })
+    } finally {
+      setFetchingEmails(false)
+    }
+  }
+
   const handlePageSizeChange = (newSize: number) => {
     const clampedSize = Math.min(newSize, MAX_PAGE_SIZE)
     setPageSize(clampedSize)
-    setPage(1) // Reset to first page when page size changes
+    setPage(1)
+  }
+
+  // Calculate stats from emails
+  const stats = {
+    total,
+    pendingReview: reviewEmails.length,
+    categories: emails.reduce((acc, email) => {
+      const cat = email.classification?.category || 'Pendente'
+      acc[cat] = (acc[cat] || 0) + 1
+      return acc
+    }, {} as Record<string, number>),
   }
 
   return (
     <div className="page-container">
+      {/* Header com título e ações */}
       <div className="page-header">
-        <h1>Email Dashboard</h1>
+        <div className="page-header-left">
+          <h1>📊 Painel de E-mails</h1>
+          <span className="email-count-badge">{total} e-mails processados</span>
+        </div>
         <div className="header-actions">
-          <span className="email-count">{total} emails total</span>
-          {/* Botão para buscar e-mails REAIS do Gmail/Outlook via conta conectada */}
           <button
-            onClick={async () => {
-              try {
-                await fetch('http://localhost:8000/api/v1/emails/fetch', {
-                  method: 'POST',
-                  headers: { 'X-API-Key': localStorage.getItem('ai_email_agent_api_key') || '' },
-                })
-                setTimeout(() => { refresh(); refreshReview() }, 5000)
-              } catch {}
-            }}
-            className="btn btn-primary"
+            onClick={handleFetchEmails}
+            className="btn btn-primary btn-with-icon"
+            disabled={fetchingEmails || loading}
+          >
+            <span className="btn-icon-text">📥</span>
+            {fetchingEmails ? 'Buscando...' : 'Buscar E-mails'}
+          </button>
+          <button
+            onClick={handleDemoEmails}
+            className="btn btn-outline btn-with-icon"
+            disabled={fetchingEmails || loading}
+            title="Inserir e-mails de demonstração para testes"
+          >
+            <span className="btn-icon-text">🧪</span>
+            Demo
+          </button>
+          <button
+            onClick={() => { refresh(); refreshReview() }}
+            className="btn btn-secondary btn-with-icon"
             disabled={loading}
           >
-            📥 Buscar E-mails
-          </button>
-          <button onClick={() => { refresh(); refreshReview() }} className="btn btn-secondary" disabled={loading}>
-            Refresh
+            <span className="btn-icon-text">🔄</span>
+            Atualizar
           </button>
         </div>
       </div>
 
-      {/* Manual Review Section - distinct visual section at the top */}
-      {!reviewLoading && reviewEmails.length > 0 && (
-        <ReviewSection emails={reviewEmails} />
+      {/* Status de busca */}
+      {fetchStatus && (
+        <div className={`fetch-status fetch-status-${fetchStatus.type}`}>
+          <span>{fetchStatus.type === 'success' ? '✅' : '❌'}</span>
+          <span>{fetchStatus.message}</span>
+          <button className="fetch-status-dismiss" onClick={() => setFetchStatus(null)}>×</button>
+        </div>
       )}
 
+      {/* Cards de estatísticas */}
+      <StatsCards
+        totalEmails={stats.total}
+        pendingReview={stats.pendingReview}
+        categories={stats.categories}
+      />
+
+      {/* Seção de emails que precisam de revisão manual */}
+      {!reviewLoading && reviewEmails.length > 0 && (
+        <ReviewSection emails={reviewEmails} onDismiss={() => { refresh(); refreshReview() }} />
+      )}
+
+      {/* Barra de filtros */}
       <FilterBar filters={filters} onFiltersChange={setFilters} />
 
+      {/* Mensagem de erro */}
       {error && <div className="error-message">{error}</div>}
 
+      {/* Lista de e-mails */}
       {loading ? (
-        <div className="loading">Loading emails...</div>
+        <div className="loading-container">
+          <div className="loading-spinner"></div>
+          <span>Carregando e-mails...</span>
+        </div>
       ) : (
         <EmailList emails={emails} />
       )}
 
-      {/* Pagination with page numbers, configurable page size */}
+      {/* Paginação */}
       <Pagination
         page={page}
         totalPages={totalPages}

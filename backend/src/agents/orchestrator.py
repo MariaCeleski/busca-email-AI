@@ -1,6 +1,6 @@
 # =============================================================================
 # Orquestrador de Agentes — coordena o pipeline de processamento de e-mails
-# usando LangGraph StateGraph.
+# usando LangGraph StateGraph com invocação efetiva via ainvoke().
 #
 # Objetivo: Receber um e-mail bruto e coordenar a execução sequencial/condicional
 # dos agentes (Classificador, Sumarizador, Gerador de Resposta) com base na
@@ -13,9 +13,10 @@
 # - Estado tipado (EmailWorkflowState) que flui entre os nós do grafo
 # - Routing condicional baseado em categoria, prioridade e confiança
 # - Dual path: e-mails urgentes com corpo > 200 palavras recebem resumo E resposta
-# - Retry por agente (até 3 tentativas) com timeout de 30s por execução
+# - Retry por agente (até 3 tentativas) com timeout de 30s por execução DENTRO dos nós
 # - Processamento concorrente de até 10 e-mails simultâneos (via semáforo)
 # - Estado isolado por e-mail (sem compartilhamento entre execuções paralelas)
+# - CORREÇÃO: Agora usa efetivamente self._compiled.ainvoke() em vez de reimplementação manual
 #
 # Entrada: RawEmail
 # Saída: Dict com classification, summary, draft_reply, current_stage, error
@@ -27,6 +28,8 @@ from __future__ import annotations
 import asyncio
 import logging
 from typing import Dict, Optional
+import httpx
+from datetime import datetime
 
 from typing_extensions import TypedDict
 
@@ -35,6 +38,7 @@ from langgraph.graph import END, StateGraph
 from src.agents.classifier import ClassifierAgent
 from src.agents.response import ResponseAgent
 from src.agents.summarizer import SummarizerAgent
+from src.config import get_settings
 from src.models.classification import ClassificationResult
 from src.models.draft import DraftReply
 from src.models.email import RawEmail
@@ -118,10 +122,15 @@ def route_after_summarize(state: EmailWorkflowState) -> str:
     """Determine next node after summarization.
 
     Dual path logic:
+    - If there was an error in summarization, go directly to publish_results
     - If the email was routed to summarize because it's Urgent with body > 200 words
-      AND priority High/Medium, then after summarization it also needs response generation.
+      AND priority High/Medium AND no errors, then after summarization it also needs response generation.
     - Otherwise, go directly to publish_results.
     """
+    # If there was an error during summarization, skip response generation
+    if state.get("error"):
+        return "publish_results"
+        
     if state.get("needs_dual_path", False):
         return "generate_response"
     return "publish_results"
@@ -147,6 +156,9 @@ def build_email_workflow(
     classifier: ClassifierAgent,
     summarizer: SummarizerAgent,
     response_agent: ResponseAgent,
+    max_retries: int = 3,
+    hard_timeout: int = 30,
+    orchestrator=None,
 ) -> StateGraph:
     """Construct a LangGraph StateGraph for the email processing pipeline.
 
@@ -169,57 +181,123 @@ def build_email_workflow(
     """
 
     async def classify_node(state: EmailWorkflowState) -> dict:
-        """Run classification on the email."""
+        """Run classification on the email with retry logic."""
         email = state["email"]
-        try:
-            result = await classifier.classify(email)
-            flagged = result.confidence < 0.6
+        
+        retry_counts = state.get("retry_counts", {})
+        retry_counts.setdefault("classifier", 0)
+        
+        for attempt in range(1, max_retries + 1):
+            try:
+                result = await asyncio.wait_for(
+                    classifier.classify(email),
+                    timeout=hard_timeout,
+                )
+                
+                flagged = result.confidence < 0.6
 
-            # Determine if this email needs the dual path
-            # (Urgent + body > 200 words + High/Medium priority)
-            needs_dual = False
-            if (
-                result.category == EmailCategory.URGENT
-                and result.priority in (PriorityLevel.HIGH, PriorityLevel.MEDIUM)
-                and len(email.body.split()) > 200
-            ):
-                needs_dual = True
+                # Determine if this email needs the dual path
+                # (Urgent + body > 200 words + High/Medium priority)
+                needs_dual = False
+                if (
+                    result.category == EmailCategory.URGENT
+                    and result.priority in (PriorityLevel.HIGH, PriorityLevel.MEDIUM)
+                    and len(email.body.split()) > 200
+                ):
+                    needs_dual = True
 
-            return {
-                "classification": result,
-                "current_stage": WorkflowStage.CLASSIFYING.value,
-                "flagged_for_review": flagged,
-                "needs_dual_path": needs_dual,
-            }
-        except Exception as exc:
-            logger.error("Classification failed: %s", exc)
-            return {
-                "classification": None,
-                "current_stage": WorkflowStage.FAILED.value,
-                "error": str(exc),
-                "flagged_for_review": True,
-                "needs_dual_path": False,
-            }
+                # Trigger webhook for agent completion
+                if orchestrator:
+                    await orchestrator._trigger_webhook(
+                        "agent_completed",
+                        {"classification": result.model_dump(mode='json'), "confidence": result.confidence},
+                        agent_name="classifier"
+                    )
+
+                return {
+                    "classification": result,
+                    "current_stage": WorkflowStage.CLASSIFYING.value,
+                    "flagged_for_review": flagged,
+                    "needs_dual_path": needs_dual,
+                    "retry_counts": retry_counts,
+                }
+            except (asyncio.TimeoutError, Exception) as exc:
+                retry_counts["classifier"] = attempt
+                logger.warning(
+                    "Classification failed (attempt %d/%d): %s",
+                    attempt,
+                    max_retries,
+                    exc,
+                )
+                if attempt == max_retries:
+                    # Trigger error webhook
+                    if orchestrator:
+                        await orchestrator._trigger_webhook(
+                            "error_occurred",
+                            {"email": email.model_dump(mode='json')},
+                            error_info=f"Classification failed after {max_retries} retries: {exc}"
+                        )
+                    return {
+                        "classification": None,
+                        "current_stage": WorkflowStage.FAILED.value,
+                        "error": f"Classification failed after {max_retries} retries: {exc}",
+                        "flagged_for_review": True,
+                        "needs_dual_path": False,
+                        "retry_counts": retry_counts,
+                    }
 
     async def summarize_node(state: EmailWorkflowState) -> dict:
-        """Run summarization on the email."""
+        """Run summarization on the email with retry logic."""
         email = state["email"]
-        try:
-            result = await summarizer.summarize(email)
-            return {
-                "summary": result,
-                "current_stage": WorkflowStage.SUMMARIZING.value,
-            }
-        except Exception as exc:
-            logger.error("Summarization failed: %s", exc)
-            return {
-                "summary": None,
-                "current_stage": WorkflowStage.FAILED.value,
-                "error": str(exc),
-            }
+        
+        retry_counts = state.get("retry_counts", {})
+        retry_counts.setdefault("summarizer", 0)
+        
+        for attempt in range(1, max_retries + 1):
+            try:
+                result = await asyncio.wait_for(
+                    summarizer.summarize(email),
+                    timeout=hard_timeout,
+                )
+
+                # Trigger webhook for agent completion
+                if orchestrator:
+                    await orchestrator._trigger_webhook(
+                        "agent_completed",
+                        {"summary": result.model_dump(mode='json')},
+                        agent_name="summarizer"
+                    )
+
+                return {
+                    "summary": result,
+                    "current_stage": WorkflowStage.SUMMARIZING.value,
+                    "retry_counts": retry_counts,
+                }
+            except (asyncio.TimeoutError, Exception) as exc:
+                retry_counts["summarizer"] = attempt
+                logger.warning(
+                    "Summarization failed (attempt %d/%d): %s",
+                    attempt,
+                    max_retries,
+                    exc,
+                )
+                if attempt == max_retries:
+                    # Trigger error webhook
+                    if orchestrator:
+                        await orchestrator._trigger_webhook(
+                            "error_occurred",
+                            {"email": email.model_dump(mode='json')},
+                            error_info=f"Summarization failed after {max_retries} retries: {exc}"
+                        )
+                    return {
+                        "summary": None,
+                        "current_stage": WorkflowStage.FAILED.value,
+                        "error": f"Summarization failed after {max_retries} retries: {exc}",
+                        "retry_counts": retry_counts,
+                    }
 
     async def generate_response_node(state: EmailWorkflowState) -> dict:
-        """Run response generation on the email."""
+        """Run response generation on the email with retry logic."""
         email = state["email"]
         classification = state.get("classification")
         if classification is None:
@@ -228,19 +306,52 @@ def build_email_workflow(
                 "current_stage": WorkflowStage.FAILED.value,
                 "error": "Cannot generate response without classification",
             }
-        try:
-            result = await response_agent.generate_reply(email, classification)
-            return {
-                "draft_reply": result,
-                "current_stage": WorkflowStage.GENERATING_REPLY.value,
-            }
-        except Exception as exc:
-            logger.error("Response generation failed: %s", exc)
-            return {
-                "draft_reply": None,
-                "current_stage": WorkflowStage.FAILED.value,
-                "error": str(exc),
-            }
+        
+        retry_counts = state.get("retry_counts", {})
+        retry_counts.setdefault("response_agent", 0)
+        
+        for attempt in range(1, max_retries + 1):
+            try:
+                result = await asyncio.wait_for(
+                    response_agent.generate_reply(email, classification),
+                    timeout=hard_timeout,
+                )
+
+                # Trigger webhook for agent completion
+                if orchestrator:
+                    await orchestrator._trigger_webhook(
+                        "agent_completed",
+                        {"draft_reply": result.model_dump(mode='json')},
+                        agent_name="response_agent"
+                    )
+
+                return {
+                    "draft_reply": result,
+                    "current_stage": WorkflowStage.GENERATING_REPLY.value,
+                    "retry_counts": retry_counts,
+                }
+            except (asyncio.TimeoutError, Exception) as exc:
+                retry_counts["response_agent"] = attempt
+                logger.warning(
+                    "Response generation failed (attempt %d/%d): %s",
+                    attempt,
+                    max_retries,
+                    exc,
+                )
+                if attempt == max_retries:
+                    # Trigger error webhook
+                    if orchestrator:
+                        await orchestrator._trigger_webhook(
+                            "error_occurred",
+                            {"email": email.model_dump(mode='json'), "classification": classification.model_dump(mode='json')},
+                            error_info=f"Response generation failed after {max_retries} retries: {exc}"
+                        )
+                    return {
+                        "draft_reply": None,
+                        "current_stage": WorkflowStage.FAILED.value,
+                        "error": f"Response generation failed after {max_retries} retries: {exc}",
+                        "retry_counts": retry_counts,
+                    }
 
     async def manual_review_node(state: EmailWorkflowState) -> dict:
         """Flag the email for manual human review."""
@@ -260,6 +371,17 @@ def build_email_workflow(
             stage = WorkflowStage.MANUAL_REVIEW.value
         else:
             stage = WorkflowStage.COMPLETED.value
+
+        # Trigger final webhook for email processing completion
+        if orchestrator and stage == WorkflowStage.COMPLETED.value:
+            email_data = {
+                "email": state.get("email").model_dump(mode='json') if state.get("email") else {},
+                "classification": state.get("classification").model_dump(mode='json') if state.get("classification") else {},
+                "summary": state.get("summary").model_dump(mode='json') if state.get("summary") else {},
+                "draft_reply": state.get("draft_reply").model_dump(mode='json') if state.get("draft_reply") else {},
+                "stage": stage
+            }
+            await orchestrator._trigger_webhook("email_processed", email_data)
 
         return {"current_stage": stage}
 
@@ -324,6 +446,7 @@ class AgentOrchestrator:
     - 30-second hard timeout per agent execution
     - Concurrent processing of up to max_concurrent simultaneous emails
     - Isolated state per email
+    - Webhook integration for low-code automation platforms
     """
 
     def __init__(
@@ -341,13 +464,16 @@ class AgentOrchestrator:
         self._max_retries = max_retries
         self._hard_timeout = hard_timeout
         self._semaphore = asyncio.Semaphore(max_concurrent)
+        self._settings = get_settings()
 
         # Build the workflow graph
-        self._workflow = build_email_workflow(classifier, summarizer, response_agent)
+        self._workflow = build_email_workflow(
+            classifier, summarizer, response_agent, max_retries, hard_timeout, self
+        )
         self._compiled = self._workflow.compile()
 
     async def process_email(self, email: RawEmail) -> Dict:
-        """Execute the full pipeline for an email with retry and timeout logic.
+        """Execute the full pipeline for an email using LangGraph compiled workflow.
 
         Uses a semaphore to limit concurrent processing.
 
@@ -358,11 +484,16 @@ class AgentOrchestrator:
             Dict with classification, summary, draft_reply, stage, and error info.
         """
         async with self._semaphore:
-            return await self._process_with_retries(email)
+            return await self._process_with_langgraph(email)
 
-    async def _process_with_retries(self, email: RawEmail) -> Dict:
-        """Process email through the pipeline with per-agent retry logic."""
-        state: EmailWorkflowState = {
+    async def _process_with_langgraph(self, email: RawEmail) -> Dict:
+        """Process email through the LangGraph compiled workflow.
+        
+        This method actually invokes the compiled LangGraph via ainvoke(),
+        replacing the manual reimplementation that was previously used.
+        """
+        # Initialize state for LangGraph
+        initial_state: EmailWorkflowState = {
             "email": email,
             "classification": None,
             "summary": None,
@@ -373,125 +504,23 @@ class AgentOrchestrator:
             "flagged_for_review": False,
             "needs_dual_path": False,
         }
+        
+        try:
+            # Execute the compiled LangGraph workflow
+            # This is the key fix: actually use self._compiled instead of manual implementation
+            final_state = await self._compiled.ainvoke(initial_state)
+            
+            # Build and return result from final state
+            return self._build_result(final_state)
+            
+        except Exception as exc:
+            logger.error("LangGraph execution failed: %s", exc)
+            # Fallback to manual error state
+            error_state = initial_state.copy()
+            error_state["error"] = str(exc)
+            error_state["current_stage"] = WorkflowStage.FAILED.value
+            return self._build_result(error_state)
 
-        # Step 1: Classify with retry
-        classification = await self._execute_agent_with_retry(
-            "classifier",
-            self._classify_email,
-            email,
-            state,
-        )
-        if classification is None:
-            # Retry exhausted — mark failed
-            return self._build_result(state)
-
-        state["classification"] = classification
-        state["flagged_for_review"] = classification.confidence < 0.6
-
-        # If flagged for review, skip remaining agents
-        if state["flagged_for_review"]:
-            state["current_stage"] = WorkflowStage.MANUAL_REVIEW.value
-            return self._build_result(state)
-
-        # Determine route and whether dual path is needed
-        needs_dual_path = (
-            classification.category == EmailCategory.URGENT
-            and classification.priority in (PriorityLevel.HIGH, PriorityLevel.MEDIUM)
-            and len(email.body.split()) > 200
-        )
-        state["needs_dual_path"] = needs_dual_path
-
-        route = route_after_classification(state)
-
-        # Step 2: Execute based on route
-        if route == "summarize":
-            summary = await self._execute_agent_with_retry(
-                "summarizer",
-                self._summarize_email,
-                email,
-                state,
-            )
-            state["summary"] = summary
-
-            # Dual path: after summarization, also generate response
-            if needs_dual_path and state.get("error") is None:
-                draft = await self._execute_agent_with_retry(
-                    "response_agent",
-                    self._generate_response,
-                    email,
-                    classification,
-                    state,
-                )
-                state["draft_reply"] = draft
-
-        elif route == "generate_response":
-            draft = await self._execute_agent_with_retry(
-                "response_agent",
-                self._generate_response,
-                email,
-                classification,
-                state,
-            )
-            state["draft_reply"] = draft
-
-        # Finalize
-        if state.get("error"):
-            state["current_stage"] = WorkflowStage.FAILED.value
-        else:
-            state["current_stage"] = WorkflowStage.COMPLETED.value
-
-        return self._build_result(state)
-
-    async def _execute_agent_with_retry(
-        self, agent_name: str, func, *args
-    ) -> object:
-        """Execute an agent function with retry and timeout logic.
-
-        Args:
-            agent_name: Name of the agent for logging/tracking.
-            func: The async callable to execute.
-            *args: Arguments to pass (last arg is state dict for retry tracking).
-
-        Returns:
-            The result of the agent call, or None on exhaustion.
-        """
-        # The last positional arg is always the state dict
-        state = args[-1]
-        call_args = args[:-1]
-
-        retry_counts = state.get("retry_counts", {})
-        retry_counts.setdefault(agent_name, 0)
-
-        for attempt in range(1, self._max_retries + 1):
-            try:
-                result = await asyncio.wait_for(
-                    func(*call_args),
-                    timeout=self._hard_timeout,
-                )
-                return result
-            except asyncio.TimeoutError:
-                logger.warning(
-                    "Agent %s timed out (attempt %d/%d)",
-                    agent_name,
-                    attempt,
-                    self._max_retries,
-                )
-                retry_counts[agent_name] = attempt
-            except Exception as exc:
-                logger.warning(
-                    "Agent %s failed (attempt %d/%d): %s",
-                    agent_name,
-                    attempt,
-                    self._max_retries,
-                    exc,
-                )
-                retry_counts[agent_name] = attempt
-
-        # Retry exhausted
-        state["retry_counts"] = retry_counts
-        state["error"] = f"Agent {agent_name} failed after {self._max_retries} retries"
-        state["current_stage"] = WorkflowStage.FAILED.value
-        return None
 
     def handle_agent_failure(
         self, agent_name: str, state: EmailWorkflowState
@@ -509,19 +538,101 @@ class AgentOrchestrator:
         state["current_stage"] = WorkflowStage.FAILED.value
         return state
 
-    async def _classify_email(self, email: RawEmail) -> ClassificationResult:
-        """Wrapper for classifier agent call."""
-        return await self._classifier.classify(email)
+    async def _trigger_webhook(
+        self, 
+        event_type: str, 
+        email_data: Dict, 
+        agent_name: Optional[str] = None,
+        error_info: Optional[str] = None
+    ) -> None:
+        """Trigger webhook notifications for low-code automation platforms.
+        
+        Args:
+            event_type: Type of event (email_processed, agent_completed, error_occurred)
+            email_data: Email processing data
+            agent_name: Name of the agent (for agent_completed events)
+            error_info: Error information (for error_occurred events)
+        """
+        if not self._settings.enable_webhooks:
+            return
+            
+        # Convert any Pydantic models to JSON-serializable dicts
+        def make_serializable(obj):
+            if hasattr(obj, 'model_dump'):
+                return obj.model_dump(mode='json')
+            return obj
+            
+        serializable_data = {}
+        for key, value in email_data.items():
+            serializable_data[key] = make_serializable(value)
+            
+        webhook_payload = {
+            "event_type": event_type,
+            "data": {
+                "email_id": serializable_data.get("email", {}).get("provider_message_id", "unknown"),
+                "timestamp": datetime.utcnow().isoformat(),
+                **serializable_data
+            },
+            "source": "orchestrator",
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+        # Add agent-specific data
+        if agent_name:
+            webhook_payload["data"]["agent_name"] = agent_name
+            
+        # Add error-specific data  
+        if error_info:
+            webhook_payload["data"]["error_type"] = error_info
+            webhook_payload["data"]["component"] = "orchestrator"
+            webhook_payload["data"]["severity"] = "high"
+        
+        # Send to Zapier endpoint (async, non-blocking)
+        asyncio.create_task(self._send_webhook_async(webhook_payload))
 
-    async def _summarize_email(self, email: RawEmail) -> SummaryResult:
-        """Wrapper for summarizer agent call."""
-        return await self._summarizer.summarize(email)
+    async def _send_webhook_async(self, payload: Dict) -> None:
+        """Send webhook payload asynchronously without blocking main flow."""
+        try:
+            async with httpx.AsyncClient(
+                timeout=self._settings.webhook_timeout_seconds
+            ) as client:
+                # Send to internal webhook endpoint (for Make.com and internal processing)
+                webhook_url = f"{self._settings.webhook_base_url}/api/v1/webhooks/zapier"
+                
+                response = await client.post(
+                    webhook_url,
+                    json=payload,
+                    headers={"X-API-Key": self._settings.api_key}
+                )
+                
+                if response.status_code == 200:
+                    logger.debug(f"Internal webhook sent successfully: {payload['event_type']}")
+                else:
+                    logger.warning(f"Internal webhook failed with status {response.status_code}: {payload['event_type']}")
+                
+                # Send to external Zapier webhook if configured
+                if self._settings.zapier_webhook_url:
+                    await self._send_zapier_webhook(payload, client)
+                    
+        except Exception as exc:
+            logger.warning(f"Failed to send internal webhook for {payload['event_type']}: {exc}")
 
-    async def _generate_response(
-        self, email: RawEmail, classification: ClassificationResult
-    ) -> DraftReply:
-        """Wrapper for response agent call."""
-        return await self._response_agent.generate_reply(email, classification)
+    async def _send_zapier_webhook(self, payload: Dict, client: httpx.AsyncClient) -> None:
+        """Send webhook to external Zapier endpoint."""
+        try:
+            response = await client.post(
+                self._settings.zapier_webhook_url,
+                json=payload,
+                headers={"Content-Type": "application/json"}
+            )
+            
+            if response.status_code == 200:
+                logger.info(f"Zapier webhook sent successfully: {payload['event_type']}")
+            else:
+                logger.warning(f"Zapier webhook failed with status {response.status_code}: {payload['event_type']}")
+                
+        except Exception as exc:
+            logger.warning(f"Failed to send Zapier webhook for {payload['event_type']}: {exc}")
 
     def _build_result(self, state: EmailWorkflowState) -> Dict:
         """Aggregate results from workflow state into a return dict.

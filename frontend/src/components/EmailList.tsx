@@ -1,6 +1,6 @@
 /**
- * Email list component displaying a table of processed emails.
- * Features color-coded category badges and clickable rows.
+ * EmailList component — tabela de e-mails processados.
+ * Badges coloridos por categoria e linhas clicáveis.
  */
 
 import { useNavigate } from 'react-router-dom'
@@ -19,16 +19,31 @@ const CATEGORY_COLORS: Record<EmailCategory, string> = {
   Transactional: '#6f42c1',
 }
 
+const CATEGORY_LABELS: Record<string, string> = {
+  Urgent: 'Urgente',
+  Personal: 'Pessoal',
+  Informative: 'Informativo',
+  Spam: 'Spam',
+  Promotional: 'Promocional',
+  Transactional: 'Transacional',
+}
+
 function formatDate(dateStr: string): string {
   const date = new Date(dateStr)
-  return date.toLocaleString()
+  return date.toLocaleString('pt-BR')
 }
 
 export function EmailList({ emails }: EmailListProps) {
   const navigate = useNavigate()
 
   if (emails.length === 0) {
-    return <p className="empty-state">No emails found.</p>
+    return (
+      <div className="empty-state-card">
+        <div className="empty-state-icon">📭</div>
+        <h3>Nenhum e-mail encontrado</h3>
+        <p>Conecte sua conta ou clique em "Buscar E-mails" para começar.</p>
+      </div>
+    )
   }
 
   return (
@@ -36,40 +51,50 @@ export function EmailList({ emails }: EmailListProps) {
       <table>
         <thead>
           <tr>
-            <th>Category</th>
-            <th>Priority</th>
-            <th>Confidence</th>
-            <th>Sender</th>
-            <th>Subject</th>
-            <th>Processed</th>
+            <th>Categoria</th>
+            <th>Prioridade</th>
+            <th>Confiança</th>
+            <th>Remetente</th>
+            <th>Assunto</th>
+            <th>Processado em</th>
           </tr>
         </thead>
         <tbody>
-          {emails.map((email) => (
-            <tr
-              key={email.email_id}
-              onClick={() => navigate(`/email/${email.email_id}`)}
-              className="email-row"
-            >
-              <td>
-                <span
-                  className="category-badge"
-                  style={{ backgroundColor: CATEGORY_COLORS[(email.classification?.category || 'Informative') as EmailCategory] }}
-                >
-                  {email.classification?.category || 'Pendente'}
-                </span>
-              </td>
-              <td>
-                <span className={`priority-${(email.classification?.priority || 'low').toLowerCase()}`}>
-                  {email.classification?.priority || '—'}
-                </span>
-              </td>
-              <td>{email.classification?.confidence != null ? email.classification.confidence.toFixed(2) : '—'}</td>
-              <td className="email-sender">{email.sender}</td>
-              <td className="email-subject">{email.subject}</td>
-              <td className="email-timestamp">{formatDate(email.processing_timestamp)}</td>
-            </tr>
-          ))}
+          {emails.map((email) => {
+            const category = (email.classification?.category || 'Informative') as EmailCategory
+            const priority = email.classification?.priority || 'Low'
+            const confidence = email.classification?.confidence
+
+            return (
+              <tr
+                key={email.email_id}
+                onClick={() => navigate(`/email/${email.email_id}`)}
+                className="email-row"
+              >
+                <td>
+                  <span
+                    className="category-badge"
+                    style={{ backgroundColor: CATEGORY_COLORS[category] }}
+                  >
+                    {CATEGORY_LABELS[category] || category}
+                  </span>
+                </td>
+                <td>
+                  <span className={`priority-${priority.toLowerCase()}`}>
+                    {priority === 'High' ? 'Alta' : priority === 'Medium' ? 'Média' : 'Baixa'}
+                  </span>
+                </td>
+                <td>
+                  <span className={confidence != null && confidence < 0.75 ? 'low-confidence' : ''}>
+                    {confidence != null ? `${(confidence * 100).toFixed(0)}%` : '—'}
+                  </span>
+                </td>
+                <td className="email-sender">{email.sender}</td>
+                <td className="email-subject">{email.subject}</td>
+                <td className="email-timestamp">{formatDate(email.processing_timestamp)}</td>
+              </tr>
+            )
+          })}
         </tbody>
       </table>
     </div>

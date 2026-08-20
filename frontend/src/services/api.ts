@@ -10,7 +10,7 @@ import type {
   EmailFilters,
 } from '../types/email'
 
-const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080'
 
 /**
  * Retrieve the active API key at request time.
@@ -68,7 +68,7 @@ export const api = {
   /**
    * GET /api/v1/emails — paginated email list with optional filters
    */
-  getEmails: (params: GetEmailsParams = {}) => {
+  getEmails: async (params: GetEmailsParams = {}) => {
     const { page = 1, page_size = 20, filters } = params
     const searchParams = new URLSearchParams()
     searchParams.set('page', String(page))
@@ -81,6 +81,12 @@ export const api = {
 
     return request<PaginatedResponse<EmailProcessingResult>>(`/emails?${searchParams.toString()}`)
   },
+
+  /**
+   * GET /api/v1/emails/demo — demo data for testing
+   */
+  getDemoEmails: () =>
+    request<PaginatedResponse<EmailProcessingResult>>('/emails/demo'),
 
   /**
    * GET /api/v1/emails/{id} — single email detail
@@ -97,12 +103,20 @@ export const api = {
   },
 
   /**
+   * GET /api/v1/emails/demo/review — demo review emails for testing
+   */
+  getDemoReviewEmails: async () => {
+    const data = await request<PaginatedResponse<EmailProcessingResult>>('/emails/demo/review')
+    return data.items
+  },
+
+  /**
    * POST /api/v1/emails/{id}/reply/approve — approve a draft reply
    */
   approveReply: (emailId: string, body?: { reply_body?: string; suggested_subject?: string }) =>
     request<{ message: string }>(`/emails/${emailId}/reply/approve`, {
       method: 'POST',
-      body: body || {},
+      body: body ? { edited_body: body.reply_body, edited_subject: body.suggested_subject } : {},
     }),
 
   /**
@@ -142,6 +156,18 @@ export const api = {
    */
   disconnectAccount: (provider: string) =>
     request<{ message: string }>(`/auth/${provider}/disconnect`, { method: 'POST' }),
+
+  /**
+   * POST /api/v1/emails/{id}/dismiss — dismiss from review without opening
+   */
+  dismissFromReview: (emailId: string) =>
+    request<{ message: string }>(`/emails/${emailId}/dismiss`, { method: 'POST' }),
+
+  /**
+   * DELETE /api/v1/emails/{id} — delete email permanently
+   */
+  deleteEmail: (emailId: string) =>
+    request<{ message: string }>(`/emails/${emailId}`, { method: 'DELETE' }),
 }
 
 export default api

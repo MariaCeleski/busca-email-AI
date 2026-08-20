@@ -63,6 +63,13 @@ class ClassifierAgent:
         # Configura o cliente OpenAI
         self._client = AsyncOpenAI(api_key=self._api_key)
 
+        # Seção de few-shot com feedback do usuário (preenchido externamente)
+        self._feedback_section: str = ""
+
+    def set_feedback_examples(self, section: str) -> None:
+        """Injeta a seção de exemplos de feedback no prompt de classificação."""
+        self._feedback_section = section
+
     # Método principal: analisa o e-mail e retorna a classificação dentro do timeout de 10s.
     # Lança ClassificationError em caso de timeout ou resposta inválida.
     async def classify(self, email: RawEmail) -> ClassificationResult:
@@ -81,7 +88,7 @@ class ClassifierAgent:
                 flagged_for_review=True,
             )
 
-        prompt = self.build_classification_prompt(email)
+        prompt = self.build_classification_prompt(email, feedback_section=self._feedback_section)
 
         try:
             raw_output = await asyncio.wait_for(
@@ -99,9 +106,9 @@ class ClassifierAgent:
 
         return self.validate_result(raw_output, email)
 
-    # Constrói o prompt estruturado de classificação para o Gemini (em português).
-    def build_classification_prompt(self, email: RawEmail) -> str:
-        """Construct the structured classification prompt for Gemini."""
+    # Constrói o prompt estruturado de classificação para o LLM (em português).
+    def build_classification_prompt(self, email: RawEmail, feedback_section: str = "") -> str:
+        """Construct the structured classification prompt."""
         return f"""Você é um assistente de classificação de e-mails. Analise o e-mail a seguir e classifique-o.
 
 Retorne APENAS um objeto JSON válido com exatamente estes campos:
@@ -121,7 +128,13 @@ Diretrizes de prioridade:
 - "High": Requer atenção ou ação imediata
 - "Medium": Importante, mas não urgente
 - "Low": Pode ser tratado depois ou é puramente informativo
-
+Diretrizes de confiança:
+- Atribua confiança ALTA (0.85-0.95) para e-mails claros e inequívocos (ex: reunião urgente do chefe, recibo de compra)
+- Atribua confiança MÉDIA (0.60-0.80) para e-mails que podem pertencer a mais de uma categoria (ex: newsletter que pode ser informativa ou promocional)
+- Atribua confiança BAIXA (0.30-0.55) para e-mails ambíguos, suspeitos ou que exigem julgamento humano (ex: spam disfarçado, promoção que parece golpe, mensagem pessoal vinda de remetente desconhecido)
+- E-mails de Spam devem SEMPRE ter confiança entre 0.35 e 0.65, pois a distinção entre spam e promoção legítima é subjetiva
+- E-mails Promocionais de remetentes desconhecidos devem ter confiança entre 0.50 e 0.70
+{feedback_section}
 Detalhes do e-mail:
 - De: {email.sender}
 - Assunto: {email.subject}

@@ -156,7 +156,7 @@ class TestCallbackEndpoint:
             )
 
             response = await client.get(
-                "/api/v1/auth/gmail/callback?code=valid_code&state=user-123",
+                "/api/v1/auth/gmail/callback?code=valid_code&state=12345678-1234-5678-1234-567812345678",
                 follow_redirects=False,
             )
 
@@ -165,7 +165,7 @@ class TestCallbackEndpoint:
         assert "auth/success" in location
         assert "provider=gmail" in location
         mock_instance.handle_callback.assert_called_once_with(
-            code="valid_code", provider="gmail", user_id="user-123"
+            code="valid_code", provider="gmail", user_id="12345678-1234-5678-1234-567812345678"
         )
 
     @pytest.mark.asyncio

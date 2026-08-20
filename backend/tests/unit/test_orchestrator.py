@@ -419,7 +419,7 @@ class TestRetryLogic:
         assert mock_classifier.classify.call_count == 3
         assert result["current_stage"] == WorkflowStage.FAILED.value
         assert result["error"] is not None
-        assert "classifier" in result["error"]
+        assert "Classification failed after 3 retries" in result["error"]
         # Remaining agents should not be called
         mock_summarizer.summarize.assert_not_called()
         mock_response_agent.generate_reply.assert_not_called()
@@ -446,33 +446,25 @@ class TestRetryLogic:
             category=EmailCategory.INFORMATIVE, priority=PriorityLevel.LOW
         )
 
-        async def slow_classify(email):
-            await asyncio.sleep(5)
-            return classification
-
-        # First call times out, second succeeds immediately
-        mock_classifier.classify.side_effect = [
-            slow_classify(sample_email),
-            classification,
-        ]
-
-        # Override: make first call actually timeout by using side_effect properly
+        # Count how many times classify is called due to timeout retries
         call_count = 0
 
         async def classify_with_timeout(email):
             nonlocal call_count
             call_count += 1
             if call_count == 1:
-                await asyncio.sleep(5)
+                # First call times out after 1 second
+                await asyncio.sleep(2)  # Longer than hard_timeout=1
                 return classification
+            # Second call succeeds immediately  
             return classification
 
-        mock_classifier.classify.side_effect = None
         mock_classifier.classify = AsyncMock(side_effect=classify_with_timeout)
         mock_summarizer.summarize.return_value = _make_summary()
 
         result = await orchestrator.process_email(sample_email)
 
+        # Should have retried at least once due to timeout
         assert call_count >= 2
         assert result["classification"] == classification
 
@@ -548,7 +540,7 @@ class TestConcurrentProcessing:
         active_count = 0
         max_active = 0
 
-        original_process = orchestrator._process_with_retries
+        original_process = orchestrator._process_with_langgraph
 
         async def track_concurrency(email):
             nonlocal active_count, max_active
@@ -559,7 +551,7 @@ class TestConcurrentProcessing:
             active_count -= 1
             return result
 
-        orchestrator._process_with_retries = track_concurrency
+        orchestrator._process_with_langgraph = track_concurrency
 
         classification = _make_classification(
             category=EmailCategory.INFORMATIVE, priority=PriorityLevel.LOW
