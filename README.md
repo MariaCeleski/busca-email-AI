@@ -195,7 +195,151 @@ Acesse: http://localhost:3000 — Login com API Key: `dev-api-key-2024`
 
 ---
 
-## 10. Decisões Principais
+## 10. Automação Low-Code/No-Code 
+
+### 🔌 Integração com Zapier
+
+O sistema possui webhooks dedicados para integração com plataformas low-code, permitindo automações visuais sem necessidade de programação.
+
+**Endpoint**: `/api/v1/webhooks/zapier`
+**Autenticação**: X-API-Key header
+**Status**: ✅ **OPERACIONAL**
+
+#### Configuração Zapier + Slack
+
+1. **Criar Zap**: Webhooks by Zapier → Slack
+2. **URL do Webhook**: `https://hooks.zapier.com/hooks/catch/28584917/4t5ocoi/`
+3. **Trigger**: Receber payload do sistema quando email é processado
+4. **Ação**: Enviar notificação no Slack
+
+**Exemplo de Payload Enviado**:
+```json
+{
+  "event_type": "email_processed",
+  "timestamp": "2024-12-19T10:30:00Z",
+  "data": {
+    "email_id": "email_123",
+    "classification": {
+      "category": "Urgent",
+      "priority": "High"
+    },
+    "summary": "Cliente reportou sistema fora do ar...",
+    "draft_reply": "Recebido. Nossa equipe está verificando..."
+  }
+}
+```
+
+**Resultado no Slack**:
+```
+🚨 Email Urgente Processado
+📧 De: cliente@empresa.com
+🏷️ Categoria: Urgent (Prioridade: High) 
+📝 Resumo: Cliente reportou sistema fora do ar...
+💬 Rascunho: "Recebido. Nossa equipe está verificando..."
+```
+
+#### Triggers Automatizados
+
+O sistema envia webhooks automaticamente para:
+- **email_processed**: Quando um email é classificado e processado
+- **agent_completed**: Quando um agente específico finaliza sua tarefa  
+- **error_occurred**: Quando há erro no pipeline de processamento
+
+### 🎨 Integração com Make.com
+
+**Endpoint**: `/api/v1/webhooks/make`
+**Formato**: Automações visuais com interface drag-and-drop
+
+#### Cenários Implementados
+
+**1. Monitor de Sistema** (Timer → API Check → Webhook):
+- Executa a cada 5 minutos
+- Verifica estatísticas do sistema (`/api/v1/emails/stats`)
+- Envia dados para webhook Make.com
+
+**2. Gerador de Relatórios** (Timer Diário → Coleta Dados → Google Sheets):
+- Executa diariamente às 9:00
+- Gera relatório de emails processados
+- Salva automaticamente em planilha
+
+**3. Alertas Condicionais** (HTTP Trigger → Filter → Notification):
+- Recebe evento do sistema
+- Filtra apenas emails urgentes
+- Dispara alerta via email/SMS
+
+#### Template Make.com
+```json
+{
+  "name": "AI Email Agent - Monitor",
+  "modules": [
+    {
+      "type": "timer",
+      "interval": 300
+    },
+    {
+      "type": "http",
+      "url": "http://localhost:8080/api/v1/webhooks/make",
+      "method": "POST",
+      "body": {
+        "event": "health_monitor",
+        "scenario_id": "basic_monitor"
+      }
+    }
+  ]
+}
+```
+
+### 📊 Monitoramento de Integrações
+
+**Logs Estruturados**:
+```bash
+# Visualizar webhooks enviados
+curl -H "X-API-Key: dev-api-key-2024" \
+  http://localhost:8080/api/v1/webhooks/logs
+
+# Estatísticas de uso
+curl -H "X-API-Key: dev-api-key-2024" \
+  http://localhost:8080/api/v1/webhooks/stats
+```
+
+**Métricas Disponíveis**:
+- Número de webhooks enviados (últimas 24h)
+- Taxa de sucesso/erro por plataforma
+- Tempo médio de resposta
+- Eventos mais frequentes
+
+### 🔧 Configuração de Desenvolvimento
+
+1. **Instalar ngrok** (para testes locais):
+```bash
+ngrok http 8080
+# URL pública: https://abc123.ngrok.io
+```
+
+2. **Configurar Webhook URL**:
+```bash
+# No backend/.env
+ZAPIER_WEBHOOK_URL=https://hooks.zapier.com/hooks/catch/28584917/4t5ocoi/
+MAKE_WEBHOOK_ENABLED=true
+```
+
+3. **Testar Integração**:
+```bash
+# Script de teste incluído
+python test_zapier_integration.py
+```
+
+### 📚 Documentação Complementar
+
+- **Zapier**: [`docs/zapier-setup-guide.md`](docs/zapier-setup-guide.md)
+- **Make.com**: [`docs/make-com-setup-guide.md`](docs/make-com-setup-guide.md)  
+- **Integração Completa**: [`docs/zapier-integration-complete.md`](docs/zapier-integration-complete.md)
+
+**Conformidade SCTEC 4.9**: ✅ **Automação Low-Code/No-Code implementada** (Zapier + Make.com)
+
+---
+
+## 11. Decisões Principais
 
 | Decisão | Justificativa |
 |---------|---------------|
@@ -208,7 +352,7 @@ Acesse: http://localhost:3000 — Login com API Key: `dev-api-key-2024`
 
 ---
 
-## 11. Limitações
+## 12. Limitações
 
 - Não processa anexos (PDF, imagens)
 - Suporte apenas a Gmail e Outlook (não Yahoo, ProtonMail)
@@ -219,7 +363,7 @@ Acesse: http://localhost:3000 — Login com API Key: `dev-api-key-2024`
 
 ---
 
-## 12. Estrutura do Projeto
+## 13. Estrutura do Projeto
 
 ```
 ├── backend/
@@ -252,7 +396,7 @@ Acesse: http://localhost:3000 — Login com API Key: `dev-api-key-2024`
 
 ---
 
-## 13. Documentação Adicional
+## 14. Documentação Adicional
 
 - [Histórico de Prompts](docs/historico-prompts.md)
 - [Arquitetura](docs/architecture.md)
@@ -262,7 +406,7 @@ Acesse: http://localhost:3000 — Login com API Key: `dev-api-key-2024`
 
 ---
 
-## 14. Tech Stack
+## 15. Tech Stack
 
 | Camada | Tecnologia |
 |--------|-----------|
@@ -275,7 +419,7 @@ Acesse: http://localhost:3000 — Login com API Key: `dev-api-key-2024`
 
 ---
 
-## 15. Variáveis de Ambiente
+## 16. Variáveis de Ambiente
 
 Copie `backend/.env.example` para `backend/.env` e preencha:
 
@@ -293,7 +437,7 @@ Copie `backend/.env.example` para `backend/.env` e preencha:
 
 ---
 
-## 16. Cenários de Uso (Entrada/Saída)
+## 17. Cenários de Uso (Entrada/Saída)
 
 ### Cenário 1 — Email Urgente (Alta prioridade)
 
@@ -378,7 +522,7 @@ Copie `backend/.env.example` para `backend/.env` e preencha:
 
 ---
 
-## 17. Padrões de Prompting Utilizados
+## 18. Padrões de Prompting Utilizados
 
 ### Tabela de Padrões
 
@@ -445,7 +589,7 @@ Limites quantitativos explícitos que **restringem** a saída do modelo.
 
 ---
 
-## 18. Análise Crítica da IA no Projeto
+## 19. Análise Crítica da IA no Projeto
 
 ### Pontos Fortes
 - **Classificação consistente**: GPT-4o-mini acerta ~90% das categorias em emails claros
@@ -470,7 +614,7 @@ Escolhemos `gpt-4o-mini` em vez de `gpt-4o` porque:
 
 ---
 
-## 19. Melhorias Futuras (Roadmap)
+## 20. Melhorias Futuras (Roadmap)
 
 | Prioridade | Melhoria | Impacto |
 |-----------|----------|---------|
