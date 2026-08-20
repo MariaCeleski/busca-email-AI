@@ -1,27 +1,42 @@
 {
   "mcpServers": {
     "postgres": {
-      "command": "npx",
+      "command": "/Users/mariadelourdesceleski/.nvm/versions/node/v20.20.2/bin/npx",
       "args": [
         "-y",
         "@modelcontextprotocol/server-postgres",
         "postgresql://postgres:postgres@localhost:5432/email_agent"
-      ]
+      ],
+      "env": {
+        "FASTMCP_LOG_LEVEL": "ERROR"
+      },
+      "disabled": false,
+      "autoApprove": []
     },
     "memory": {
-      "command": "npx",
+      "command": "/Users/mariadelourdesceleski/.nvm/versions/node/v20.20.2/bin/npx",
       "args": [
         "-y",
         "@modelcontextprotocol/server-memory"
-      ]
+      ],
+      "env": {
+        "FASTMCP_LOG_LEVEL": "ERROR"
+      },
+      "disabled": false,
+      "autoApprove": []
     },
     "filesystem": {
-      "command": "npx",
+      "command": "/Users/mariadelourdesceleski/.nvm/versions/node/v20.20.2/bin/npx",
       "args": [
         "-y",
         "@modelcontextprotocol/server-filesystem",
         "/Users/mariadelourdesceleski/Documents/miniprojetomod2"
-      ]
+      ],
+      "env": {
+        "FASTMCP_LOG_LEVEL": "ERROR"
+      },
+      "disabled": false,
+      "autoApprove": []
     }
   }
 }
