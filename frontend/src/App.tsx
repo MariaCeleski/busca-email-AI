@@ -7,6 +7,7 @@ import { Auth } from './pages/Auth'
 import { Dashboard } from './pages/Dashboard'
 import { EmailDetail } from './pages/EmailDetail'
 import { ManualReview } from './pages/ManualReview'
+import { Feedback } from './pages/Feedback'
 import { Settings } from './pages/Settings'
 import { OAuthSuccess, OAuthError } from './pages/OAuthCallback'
 
@@ -23,6 +24,7 @@ function App() {
             <Route path="/" element={<Dashboard />} />
             <Route path="/email/:id" element={<EmailDetail />} />
             <Route path="/review" element={<ManualReview />} />
+            <Route path="/feedback" element={<Feedback />} />
             <Route path="/settings" element={<Settings />} />
           </Route>
         </Route>

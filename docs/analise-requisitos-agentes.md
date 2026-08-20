@@ -237,7 +237,7 @@ class ResultPublisher:
 | 2 | **Gmail API** | Chamada a API externa | `src/providers/gmail.py` | `fetch_unread()` — lê e-mails; `send_reply()` — envia respostas |
 | 3 | **Microsoft Graph API** | Chamada a API externa | `src/providers/microsoft.py` | `fetch_unread()`, `send_reply()` |
 | 4 | **PostgreSQL** | Leitura/escrita de dados | `src/models/repositories.py` | CRUD de e-mails, drafts, accounts, logs |
-| 5 | **Google Gemini API** | Chamada a LLM | `src/agents/classifier.py`, `summarizer.py`, `response.py` | Classificação, resumo, geração de texto |
+| 5 | **OpenAI GPT-4o-mini** | Chamada a LLM | `src/agents/classifier.py`, `summarizer.py`, `response.py` | Classificação, resumo, geração de texto |
 
 ### Exemplo Detalhado — ChromaDB como Ferramenta do Response Agent
 

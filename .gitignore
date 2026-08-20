@@ -56,3 +56,11 @@ Thumbs.db
 # Docker
 # =============================================================================
 docker-compose.override.yml
+
+# =============================================================================
+# Internal/Private Documents
+# =============================================================================
+ANALISE-CONFORMIDADE-REQUISITOS-INTERNO.md
+LEMBRETE-*.md
+*.internal.md
+test_*.sh

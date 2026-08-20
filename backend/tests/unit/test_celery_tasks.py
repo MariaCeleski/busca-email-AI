@@ -310,9 +310,13 @@ class TestPollEmailsTask:
                 google_client_id="test-client-id",
                 google_client_secret="test-client-secret",
             )
-            with patch("src.providers.gmail.GmailClient") as MockGmail:
-                MockGmail.return_value = MagicMock()
-                client = _create_provider_client(mock_account)
+            with patch("src.security.encryption.TokenEncryptionService") as MockEnc:
+                mock_enc_instance = MagicMock()
+                mock_enc_instance.decrypt.return_value = "decrypted-token"
+                MockEnc.return_value = mock_enc_instance
+                with patch("src.providers.gmail.GmailClient") as MockGmail:
+                    MockGmail.return_value = MagicMock()
+                    client = _create_provider_client(mock_account)
 
         assert client is not None
 
@@ -331,9 +335,13 @@ class TestPollEmailsTask:
                 microsoft_client_secret="test-client-secret",
                 microsoft_tenant_id="common",
             )
-            with patch("src.providers.microsoft.MicrosoftGraphClient") as MockMS:
-                MockMS.return_value = MagicMock()
-                client = _create_provider_client(mock_account)
+            with patch("src.security.encryption.TokenEncryptionService") as MockEnc:
+                mock_enc_instance = MagicMock()
+                mock_enc_instance.decrypt.return_value = "decrypted-token"
+                MockEnc.return_value = mock_enc_instance
+                with patch("src.providers.microsoft.MicrosoftGraphClient") as MockMS:
+                    MockMS.return_value = MagicMock()
+                    client = _create_provider_client(mock_account)
 
         assert client is not None
 

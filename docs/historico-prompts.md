@@ -13,8 +13,9 @@
 5. [Fase 5 — Migração e Ajustes de LLM](#fase-5--migração-e-ajustes-de-llm)
 6. [Fase 6 — Documentação e Critérios Acadêmicos](#fase-6--documentação-e-critérios-acadêmicos)
 7. [Fase 7 — Execução Completa das Tasks (Run All)](#fase-7--execução-completa-das-tasks-run-all)
-8. [Resumo Estatístico](#resumo-estatístico)
-9. [Artefatos Gerados](#artefatos-gerados)
+8. [Fase 8 — Qualidade, Testes e Observabilidade com IA](#fase-8--qualidade-testes-e-observabilidade-com-ia)
+9. [Resumo Estatístico](#resumo-estatístico)
+10. [Artefatos Gerados](#artefatos-gerados)
 
 ---
 
