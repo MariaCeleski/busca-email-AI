@@ -89,7 +89,7 @@ O projeto integra **5 ferramentas** (o requisito pedia pelo menos 1):
 | 2 | **Gmail API** | API externa | `backend/src/providers/gmail.py` | Email Monitor lê e-mails; sistema envia respostas aprovadas |
 | 3 | **Microsoft Graph API** | API externa | `backend/src/providers/microsoft.py` | Mesmo que Gmail, para contas Outlook |
 | 4 | **PostgreSQL** | Banco de dados | `backend/src/models/repositories.py` | Persiste resultados do processamento |
-| 5 | **Google Gemini** | LLM (API) | `backend/src/agents/classifier.py` | Classificação, sumarização e geração de texto |
+| 5 | **OpenAI GPT-4o-mini** | Chamada a LLM | `src/agents/classifier.py`, `summarizer.py`, `response.py` | Classificação, resumo, geração de texto |
 
 **Exemplo — ChromaDB como ferramenta do Response Agent:**
 ```python

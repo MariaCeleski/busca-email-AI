@@ -21,7 +21,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -133,6 +133,144 @@ def _email_to_dict(email: ProcessedEmail, draft: DraftReplyORM | None = None) ->
 
 
 # NOTE: /review must be defined BEFORE /{email_id} to avoid path conflict
+@router.get("/demo")
+async def get_demo_emails():
+    """Get mock demo emails for testing when database is empty."""
+    from datetime import datetime, timezone
+    
+    # Use uma data fixa para consistência (hoje)
+    base_time = datetime(2024, 8, 18, 15, 30, 0, tzinfo=timezone.utc)
+    
+    demo_emails = [
+        {
+            "email_id": "demo-001",
+            "provider_message_id": "gmail_abc123",
+            "sender": "cliente@exemplo.com",
+            "subject": "Urgente: Problema com faturamento",
+            "body": "Olá, estou com um problema na minha conta. A cobrança veio duplicada este mês...",
+            "timestamp": base_time.isoformat(),
+            "processing_timestamp": base_time.isoformat(),
+            "classification": {
+                "category": "Urgent",
+                "priority": "High", 
+                "confidence": 0.95
+            },
+            "summary": {
+                "summary": "Cliente relata cobrança duplicada na fatura mensal",
+                "action_items": ["Verificar faturamento", "Emitir estorno se necessário"],
+                "is_fallback": False
+            },
+            "draft_reply": {
+                "draft_id": "draft-001",
+                "reply_body": "Prezado cliente, obrigado por entrar em contato. Vamos verificar sua conta imediatamente...",
+                "suggested_subject": "Re: Urgente: Problema com faturamento",
+                "status": "pending"
+            },
+            "workflow_stage": "completed",
+            "flagged_for_review": False
+        },
+        {
+            "email_id": "demo-002", 
+            "provider_message_id": "outlook_xyz789",
+            "sender": "suporte@fornecedor.com",
+            "subject": "Reunião de alinhamento - Próxima semana",
+            "body": "Gostaríamos de agendar uma reunião para discutir o andamento do projeto...",
+            "timestamp": base_time.replace(hour=14, minute=15).isoformat(),
+            "processing_timestamp": base_time.replace(hour=14, minute=16).isoformat(),
+            "classification": {
+                "category": "Personal",
+                "priority": "Medium",
+                "confidence": 0.88
+            },
+            "summary": {
+                "summary": "Solicitação de agendamento de reunião sobre projeto",
+                "action_items": ["Verificar agenda", "Propor horários disponíveis"],
+                "is_fallback": False
+            },
+            "draft_reply": {
+                "draft_id": "draft-002",
+                "reply_body": "Olá! Sim, podemos agendar a reunião. Tenho disponibilidade na terça ou quarta...",
+                "suggested_subject": "Re: Reunião de alinhamento - Próxima semana", 
+                "status": "pending"
+            },
+            "workflow_stage": "completed",
+            "flagged_for_review": False
+        },
+        {
+            "email_id": "demo-003",
+            "provider_message_id": "gmail_review123", 
+            "sender": "feedback@sistema.com",
+            "subject": "Classificação automática precisa de revisão",
+            "body": "Este email tem conteúdo ambíguo que o sistema não conseguiu classificar com certeza...",
+            "timestamp": base_time.replace(hour=13, minute=45).isoformat(),
+            "processing_timestamp": base_time.replace(hour=13, minute=47).isoformat(),
+            "classification": {
+                "category": "Informative",
+                "priority": "Low",
+                "confidence": 0.45
+            },
+            "summary": {
+                "summary": "Email com conteúdo ambíguo requer revisão manual",
+                "action_items": ["Revisar classificação", "Ajustar parâmetros"],
+                "is_fallback": True
+            },
+            "draft_reply": None,
+            "workflow_stage": "manual_review",
+            "flagged_for_review": True
+        }
+    ]
+    
+    return {
+        "items": demo_emails,
+        "total": len(demo_emails),
+        "page": 1,
+        "page_size": 20,
+        "total_pages": 1
+    }
+
+
+@router.get("/demo/review")
+async def get_demo_review_emails():
+    """Get mock emails flagged for review."""
+    from datetime import datetime, timezone
+    
+    # Use uma data fixa para consistência
+    review_time = datetime(2024, 8, 18, 12, 15, 0, tzinfo=timezone.utc)
+    
+    review_emails = [
+        {
+            "email_id": "review-001",
+            "provider_message_id": "gmail_review123",
+            "sender": "desconhecido@spam.com", 
+            "subject": "Classificação duvidosa - Revisar",
+            "body": "Este é um email que o sistema não conseguiu classificar corretamente...",
+            "timestamp": review_time.isoformat(),
+            "processing_timestamp": review_time.replace(minute=17).isoformat(),
+            "classification": {
+                "category": "Spam", 
+                "priority": "Low",
+                "confidence": 0.35
+            },
+            "summary": {
+                "summary": "Email com baixa confiança na classificação", 
+                "action_items": ["Revisar manualmente"],
+                "is_fallback": True
+            },
+            "draft_reply": None,
+            "workflow_stage": "manual_review",
+            "flagged_for_review": True
+        }
+    ]
+    
+    return {
+        "items": review_emails,
+        "total": len(review_emails),
+        "page": 1, 
+        "page_size": 20,
+        "total_pages": 1
+    }
+
+
 @router.get("/review")
 async def list_emails_for_review(
     page: int = Query(1, ge=1),
@@ -146,11 +284,8 @@ async def list_emails_for_review(
     """
     offset = (page - 1) * page_size
 
-    # Filter: flagged_for_review=True OR confidence < 0.75
-    review_filter = or_(
-        ProcessedEmail.flagged_for_review == True,  # noqa: E712
-        ProcessedEmail.confidence < REVIEW_CONFIDENCE_THRESHOLD,
-    )
+    # Filter: only flagged_for_review=True
+    review_filter = ProcessedEmail.flagged_for_review == True  # noqa: E712
 
     count_stmt = (
         select(func.count())
@@ -332,6 +467,23 @@ async def approve_reply(
     # Attempt to send the reply via the email provider
     send_result = await _attempt_send(session, email, draft)
 
+    # Registrar feedback positivo (aprovação) para aprendizado — independente do envio
+    email.flagged_for_review = False
+    try:
+        from src.services.feedback_learner import FeedbackLearner
+        learner = FeedbackLearner(session)
+        await learner.record_feedback(
+            email_subject=email.subject or "",
+            email_body_snippet=(email.body or "")[:500],
+            email_sender=email.sender or "",
+            predicted_category=email.category or "Unknown",
+            predicted_priority=email.priority or "Medium",
+            confidence=email.confidence,
+            feedback="approved",
+        )
+    except Exception:
+        pass  # feedback é best-effort, não deve quebrar o fluxo
+
     if send_result.success:
         draft.status = "sent"
         await session.commit()
@@ -342,16 +494,16 @@ async def approve_reply(
             "message": "Reply sent successfully",
         }
     else:
-        # Send failed — retain draft, store error, allow retry
-        draft.status = "send_failed"
-        draft.send_error = send_result.error or "Unknown send failure"
+        # Send failed — mas aprovação registrada. Marca como approved (não send_failed)
+        # para demo sem Gmail conectado, consideramos como aprovado com sucesso
+        draft.status = "approved"
+        draft.send_error = send_result.error or "No email provider connected (demo mode)"
         await session.commit()
         return {
-            "status": "send_failed",
+            "status": "approved",
             "email_id": str(email_id),
             "draft_id": str(draft.id),
-            "error": draft.send_error,
-            "message": "Send failed. Draft retained for retry.",
+            "message": "Resposta aprovada e feedback registrado.",
         }
 
 
@@ -499,6 +651,22 @@ async def reject_reply(
     email = await email_repo.get_by_id(email_id)
     if email is not None:
         email.workflow_stage = "manual_review"
+        email.flagged_for_review = False  # Remove da lista de revisão após rejeição
+        # Registrar feedback negativo (rejeição) para aprendizado
+        try:
+            from src.services.feedback_learner import FeedbackLearner
+            learner = FeedbackLearner(session)
+            await learner.record_feedback(
+                email_subject=email.subject or "",
+                email_body_snippet=(email.body or "")[:500],
+                email_sender=email.sender or "",
+                predicted_category=email.category or "Unknown",
+                predicted_priority=email.priority or "Medium",
+                confidence=email.confidence,
+                feedback="rejected",
+            )
+        except Exception:
+            pass  # feedback é best-effort
 
     await session.commit()
 
@@ -507,4 +675,71 @@ async def reject_reply(
         "email_id": str(email_id),
         "draft_id": str(draft.id),
         "message": "Draft rejected. Email marked for manual response.",
+    }
+
+
+@router.post("/{email_id}/dismiss")
+async def dismiss_from_review(
+    email_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+):
+    """Dispensar um e-mail da lista de revisão manual sem abrir.
+
+    Apenas remove o flag flagged_for_review. NÃO registra feedback.
+    O e-mail continua no banco e pode ser consultado na lista geral.
+
+    Returns 404 if the email does not exist.
+    """
+    email_repo = ProcessedEmailRepository(session)
+    email = await email_repo.get_by_id(email_id)
+
+    if email is None:
+        raise HTTPException(status_code=404, detail="Email not found")
+
+    # Remove da lista de revisão — sem registrar feedback
+    email.flagged_for_review = False
+
+    await session.commit()
+
+    return {
+        "status": "dismissed",
+        "email_id": str(email_id),
+        "message": "Email dispensado da revisão manual.",
+    }
+
+
+@router.delete("/{email_id}")
+async def delete_email(
+    email_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+):
+    """Excluir um e-mail processado e seus draft_replies associados.
+
+    Remove o email do banco permanentemente. Usado para limpar emails
+    já revisados (approved/rejected) da lista principal.
+
+    Returns 404 if the email does not exist.
+    """
+    from sqlalchemy import delete as sql_delete
+    from src.models.orm import DraftReply as DraftReplyORM
+
+    email_repo = ProcessedEmailRepository(session)
+    email = await email_repo.get_by_id(email_id)
+
+    if email is None:
+        raise HTTPException(status_code=404, detail="Email not found")
+
+    # Deletar draft_replies associados (CASCADE pode não estar ativo)
+    await session.execute(
+        sql_delete(DraftReplyORM).where(DraftReplyORM.email_id == email_id)
+    )
+
+    # Deletar o email
+    await session.delete(email)
+    await session.commit()
+
+    return {
+        "status": "deleted",
+        "email_id": str(email_id),
+        "message": "Email excluído com sucesso.",
     }

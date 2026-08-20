@@ -1,6 +1,6 @@
 /**
- * Email detail page — full email content, summary, and draft reply management.
- * Implements requirements 7.3, 7.4, 7.5, 7.6, 7.7, 7.9
+ * Email detail page — conteúdo completo do e-mail, resumo e gerenciamento de resposta.
+ * Interface em português com approve/reject que alimenta o sistema de feedback.
  */
 
 import { useState } from 'react'
@@ -10,21 +10,27 @@ import { DraftReplyEditor } from '../components/DraftReplyEditor'
 import { api } from '../services/api'
 import type { DraftStatus } from '../types/email'
 
-/**
- * Returns a human-readable label and CSS class for each draft status.
- */
+const CATEGORY_LABELS: Record<string, string> = {
+  Urgent: 'Urgente',
+  Personal: 'Pessoal',
+  Informative: 'Informativo',
+  Spam: 'Spam',
+  Promotional: 'Promocional',
+  Transactional: 'Transacional',
+}
+
 function getStatusDisplay(status: DraftStatus): { label: string; className: string } {
   switch (status) {
     case 'pending':
-      return { label: '⏳ Pending Review', className: 'draft-status-badge status-pending' }
+      return { label: '⏳ Aguardando Revisão', className: 'draft-status-badge status-pending' }
     case 'sent':
-      return { label: 'Sent ✓', className: 'draft-status-badge status-sent' }
+      return { label: '✓ Enviado', className: 'draft-status-badge status-sent' }
     case 'approved':
-      return { label: 'Approved ✓', className: 'draft-status-badge status-sent' }
+      return { label: '✓ Aprovado', className: 'draft-status-badge status-sent' }
     case 'rejected':
-      return { label: '✗ Rejected', className: 'draft-status-badge status-rejected' }
+      return { label: '✗ Rejeitado', className: 'draft-status-badge status-rejected' }
     case 'send_failed':
-      return { label: '⚠ Send Failed', className: 'draft-status-badge status-failed' }
+      return { label: '⚠ Falha no Envio', className: 'draft-status-badge status-failed' }
     default:
       return { label: status, className: 'draft-status-badge' }
   }
@@ -39,9 +45,16 @@ export function EmailDetail() {
   const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
   const [actionLoading, setActionLoading] = useState(false)
 
-  if (loading) return <div className="loading">Loading email...</div>
+  if (loading) {
+    return (
+      <div className="loading-container">
+        <div className="loading-spinner"></div>
+        <span>Carregando e-mail...</span>
+      </div>
+    )
+  }
   if (error) return <div className="error-message">{error}</div>
-  if (!email) return <div className="empty-state">Email not found.</div>
+  if (!email) return <div className="empty-state-card"><div className="empty-state-icon">📭</div><h3>E-mail não encontrado</h3></div>
 
   const handleApprove = async (body?: string, subject?: string) => {
     setActionLoading(true)
@@ -49,13 +62,13 @@ export function EmailDetail() {
     try {
       const payload = body || subject ? { reply_body: body, suggested_subject: subject } : undefined
       await api.approveReply(email.email_id, payload)
-      setStatusMessage({ type: 'success', text: 'Sent ✓ — Reply has been sent successfully.' })
+      setStatusMessage({ type: 'success', text: '✓ Resposta enviada com sucesso! Feedback registrado para aprendizado.' })
       setEditing(false)
       refresh()
     } catch (err) {
       setStatusMessage({
         type: 'error',
-        text: err instanceof Error ? err.message : 'Failed to send reply. Please try again.',
+        text: err instanceof Error ? err.message : 'Falha ao enviar resposta. Tente novamente.',
       })
     } finally {
       setActionLoading(false)
@@ -63,22 +76,21 @@ export function EmailDetail() {
   }
 
   const handleRetry = () => {
-    // Retry sending the current draft
     handleApprove()
   }
 
   const handleReject = async () => {
-    if (!confirm('Are you sure you want to reject this draft reply? The email will be marked as requiring manual response.')) return
+    if (!confirm('Tem certeza que deseja rejeitar esta resposta? O e-mail será marcado para resposta manual.')) return
     setActionLoading(true)
     setStatusMessage(null)
     try {
       await api.rejectReply(email.email_id)
-      setStatusMessage({ type: 'success', text: 'Draft rejected. Email marked as requiring manual response.' })
+      setStatusMessage({ type: 'success', text: 'Resposta rejeitada. Feedback registrado para melhorar classificações futuras.' })
       refresh()
     } catch (err) {
       setStatusMessage({
         type: 'error',
-        text: err instanceof Error ? err.message : 'Failed to reject reply.',
+        text: err instanceof Error ? err.message : 'Falha ao rejeitar resposta.',
       })
     } finally {
       setActionLoading(false)
@@ -89,66 +101,85 @@ export function EmailDetail() {
   const statusDisplay = draftStatus ? getStatusDisplay(draftStatus) : null
   const isPending = draftStatus === 'pending'
   const isSendFailed = draftStatus === 'send_failed'
+  const isActioned = draftStatus === 'approved' || draftStatus === 'rejected' || draftStatus === 'sent'
+
+  const handleDelete = async () => {
+    if (!confirm('Excluir este e-mail permanentemente da lista?')) return
+    try {
+      await api.deleteEmail(email.email_id)
+      navigate('/', { replace: true })
+    } catch {
+      // silencioso
+    }
+  }
 
   return (
     <div className="page-container">
-      <button onClick={() => navigate(-1)} className="btn btn-secondary back-btn">
-        ← Back
-      </button>
+      <div className="detail-top-actions">
+        <button onClick={() => navigate(-1)} className="btn btn-secondary back-btn">
+          ← Voltar
+        </button>
+        {isActioned && (
+          <button onClick={handleDelete} className="btn btn-danger btn-sm">
+            🗑️ Excluir da lista
+          </button>
+        )}
+      </div>
 
       <div className="email-detail">
-        {/* Email header: sender, subject, timestamp, classification */}
+        {/* Cabeçalho do e-mail */}
         <div className="email-detail-header">
-          <h1>{email.subject || '(No Subject)'}</h1>
+          <h1>{email.subject || '(Sem Assunto)'}</h1>
           <div className="email-meta">
-            <span><strong>From:</strong> {email.sender}</span>
-            <span><strong>Date:</strong> {new Date(email.timestamp).toLocaleString()}</span>
+            <span><strong>De:</strong> {email.sender}</span>
+            <span><strong>Data:</strong> {new Date(email.timestamp).toLocaleString('pt-BR')}</span>
           </div>
           <div className="email-classification">
             <span className="classification-item">
-              <strong>Category:</strong>{' '}
+              <strong>Categoria:</strong>{' '}
               <span className={`category-badge category-${email.classification.category.toLowerCase()}`}>
-                {email.classification.category}
+                {CATEGORY_LABELS[email.classification.category] || email.classification.category}
               </span>
             </span>
             <span className="classification-item">
-              <strong>Priority:</strong>{' '}
+              <strong>Prioridade:</strong>{' '}
               <span className={`priority-${email.classification.priority.toLowerCase()}`}>
-                {email.classification.priority}
+                {email.classification.priority === 'High' ? 'Alta' :
+                 email.classification.priority === 'Medium' ? 'Média' : 'Baixa'}
               </span>
             </span>
             <span className="classification-item">
-              <strong>Confidence:</strong>{' '}
-              <span className={email.classification.confidence < 0.75 ? 'low-confidence' : ''}>
-                {email.classification.confidence.toFixed(2)}
+              <strong>Confiança:</strong>{' '}
+              <span className={email.classification.confidence < 0.75 ? 'low-confidence' : 'high-confidence'}>
+                {(email.classification.confidence * 100).toFixed(0)}%
               </span>
             </span>
           </div>
         </div>
 
-        {/* Email body (formatted text) */}
+        {/* Corpo do e-mail */}
         <div className="email-body">
-          <h2>Email Content</h2>
+          <h2>📝 Conteúdo do E-mail</h2>
           <pre className="email-content">{email.body}</pre>
         </div>
 
-        {/* Summary section (if summary was generated) */}
+        {/* Resumo gerado pela IA */}
         {email.summary && (
           <div className="email-summary">
-            <h2>📋 Summary</h2>
+            <h2>📋 Resumo (gerado por IA)</h2>
             {email.summary.is_fallback && (
               <p className="summary-fallback-notice">
-                ⚠ Automatic summarization was unavailable. Showing fallback summary.
+                ⚠ Resumo de fallback — a sumarização automática não estava disponível.
               </p>
             )}
             {email.summary.no_content ? (
-              <p className="summary-no-content">No summary could be generated — email has no extractable text content.</p>
+              <p className="summary-no-content">Nenhum resumo pôde ser gerado — e-mail sem conteúdo textual extraível.</p>
             ) : (
               <>
                 <p className="summary-text">{email.summary.summary}</p>
                 {email.summary.action_items.length > 0 && (
                   <div className="action-items">
-                    <h3>Action Items</h3>
+                    <h3>📌 Ações Necessárias</h3>
                     <ul>
                       {email.summary.action_items.map((item, idx) => (
                         <li key={idx}>{item}</li>
@@ -161,11 +192,11 @@ export function EmailDetail() {
           </div>
         )}
 
-        {/* Draft reply section (if draft was generated) */}
+        {/* Rascunho de resposta gerado pela IA */}
         {email.draft_reply && (
           <div className="draft-reply-section">
             <div className="draft-reply-header">
-              <h2>✉️ Draft Reply</h2>
+              <h2>✉️ Resposta Sugerida (IA)</h2>
               {statusDisplay && (
                 <span className={statusDisplay.className}>
                   {statusDisplay.label}
@@ -173,7 +204,15 @@ export function EmailDetail() {
               )}
             </div>
 
-            {/* Status messages: sent confirmation or error with retry */}
+            {/* Feedback info */}
+            {(isPending || isSendFailed) && (
+              <div className="feedback-info-banner">
+                <span>💡</span>
+                <span>Sua decisão (aprovar/rejeitar) será usada para melhorar classificações futuras do sistema.</span>
+              </div>
+            )}
+
+            {/* Mensagens de status */}
             {statusMessage && (
               <div className={`status-message status-${statusMessage.type}`}>
                 <span>{statusMessage.text}</span>
@@ -183,79 +222,82 @@ export function EmailDetail() {
                     className="btn btn-sm btn-primary retry-btn"
                     disabled={actionLoading}
                   >
-                    Retry
+                    Tentar Novamente
                   </button>
                 )}
               </div>
             )}
 
-            {/* Show error with retry for send_failed status from server */}
+            {/* Erro de envio do servidor */}
             {isSendFailed && !statusMessage && (
               <div className="status-message status-error">
-                <span>Sending the reply failed. The draft has been retained — you can retry sending.</span>
+                <span>O envio da resposta falhou. O rascunho foi mantido — você pode tentar novamente.</span>
                 <button
                   onClick={handleRetry}
                   className="btn btn-sm btn-primary retry-btn"
                   disabled={actionLoading}
                 >
-                  Retry Send
+                  Reenviar
                 </button>
               </div>
             )}
 
             {editing ? (
               <DraftReplyEditor
-                initialBody={email.draft_reply.reply_body}
-                initialSubject={email.draft_reply.suggested_subject}
+                initialBody={email.draft_reply.edited_body || email.draft_reply.reply_body}
+                initialSubject={email.draft_reply.edited_subject || email.draft_reply.suggested_subject}
                 onApprove={(body, subject) => handleApprove(body, subject)}
                 onCancel={() => setEditing(false)}
               />
             ) : (
               <>
                 <div className="draft-preview">
-                  <p><strong>Subject:</strong> {email.draft_reply.suggested_subject}</p>
-                  <pre className="draft-body">{email.draft_reply.reply_body}</pre>
+                  <p><strong>Assunto:</strong> {email.draft_reply.edited_subject || email.draft_reply.suggested_subject}</p>
+                  <pre className="draft-body">{email.draft_reply.edited_body || email.draft_reply.reply_body}</pre>
                 </div>
 
-                {/* Approve, edit, reject controls — shown for pending or send_failed */}
+                {/* Controles de aprovação/rejeição */}
                 {(isPending || isSendFailed) && (
                   <div className="draft-actions">
                     <button
                       onClick={() => handleApprove()}
-                      className="btn btn-success"
+                      className="btn btn-success btn-with-icon"
                       disabled={actionLoading}
                     >
-                      {actionLoading ? 'Sending...' : isSendFailed ? 'Retry & Send' : 'Approve & Send'}
+                      <span className="btn-icon-text">✅</span>
+                      {actionLoading ? 'Enviando...' : isSendFailed ? 'Reenviar' : 'Aprovar e Enviar'}
                     </button>
                     <button
                       onClick={() => setEditing(true)}
-                      className="btn btn-primary"
+                      className="btn btn-primary btn-with-icon"
                       disabled={actionLoading}
                     >
-                      Edit
+                      <span className="btn-icon-text">✏️</span>
+                      Editar
                     </button>
                     <button
                       onClick={handleReject}
-                      className="btn btn-danger"
+                      className="btn btn-danger btn-with-icon"
                       disabled={actionLoading}
                     >
-                      Reject
+                      <span className="btn-icon-text">❌</span>
+                      Rejeitar
                     </button>
                   </div>
                 )}
 
-                {/* Sent confirmation display */}
+                {/* Confirmação de envio */}
                 {(draftStatus === 'sent' || draftStatus === 'approved') && !statusMessage && (
                   <div className="sent-confirmation">
                     <span className="sent-icon">✓</span>
-                    <span>Reply sent successfully</span>
+                    <span>Resposta enviada com sucesso</span>
                   </div>
                 )}
 
-                {/* Rejected display */}
+                {/* Aviso de rejeição */}
                 {draftStatus === 'rejected' && !statusMessage && (
                   <div className="rejected-notice">
-                    <span>This draft was rejected. The email requires a manual response.</span>
+                    <span>Este rascunho foi rejeitado. O e-mail requer resposta manual.</span>
                   </div>
                 )}
               </>

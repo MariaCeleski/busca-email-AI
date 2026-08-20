@@ -1,9 +1,6 @@
 /**
- * Settings page — account connection management with OAuth flows.
- * Handles connection/disconnection of Gmail and Microsoft accounts,
- * displays connection status, and handles re-authentication notifications.
- *
- * Requirements: 9.2, 9.3, 9.5, 1.5
+ * Settings page — gerenciamento de contas conectadas via OAuth.
+ * Interface em português para conectar/desconectar Gmail e Outlook.
  */
 
 import { useState, useEffect, useCallback } from 'react'
@@ -28,13 +25,12 @@ export function Settings() {
       const data = await api.getConnectedAccounts()
       setAccounts(data)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load accounts')
+      setError(err instanceof Error ? err.message : 'Falha ao carregar contas')
     } finally {
       setLoading(false)
     }
   }
 
-  // Handle WebSocket messages for real-time notifications
   const handleWebSocketMessage = useCallback(
     (message: WebSocketMessage) => {
       switch (message.type) {
@@ -42,11 +38,10 @@ export function Settings() {
           const data = message.data as { provider?: string; message?: string }
           addNotification({
             type: 'error',
-            title: 'Re-authentication Required',
-            message: data.message || `${data.provider || 'Account'} requires re-authentication. Please reconnect your account.`,
+            title: 'Reautenticação Necessária',
+            message: data.message || `${data.provider || 'Conta'} precisa ser reconectada.`,
             persistent: true,
           })
-          // Refresh accounts to show updated status
           fetchAccounts()
           break
         }
@@ -54,8 +49,8 @@ export function Settings() {
           const data = message.data as { email_id?: string; error?: string }
           addNotification({
             type: 'error',
-            title: 'Send Failed',
-            message: data.error || 'Failed to send email reply. Please retry from the email detail view.',
+            title: 'Falha no Envio',
+            message: data.error || 'Falha ao enviar resposta. Tente novamente na página de detalhes.',
             persistent: true,
           })
           break
@@ -64,21 +59,11 @@ export function Settings() {
           const data = message.data as { provider?: string }
           addNotification({
             type: 'success',
-            title: 'Account Data Deleted',
-            message: `All data for ${data.provider || 'the account'} has been deleted.`,
+            title: 'Dados Removidos',
+            message: `Todos os dados de ${data.provider || 'a conta'} foram excluídos.`,
             persistent: false,
           })
           fetchAccounts()
-          break
-        }
-        case 'deletion_failed': {
-          const data = message.data as { provider?: string; error?: string }
-          addNotification({
-            type: 'error',
-            title: 'Deletion Failed',
-            message: data.error || `Failed to delete data for ${data.provider || 'the account'}. The system will retry.`,
-            persistent: true,
-          })
           break
         }
         default:
@@ -98,13 +83,12 @@ export function Settings() {
     setConnectingProvider('gmail')
     try {
       const result = await api.connectGmail()
-      // Redirect user to the OAuth consent screen
       window.location.href = result.authorization_url
     } catch (err) {
       addNotification({
         type: 'error',
-        title: 'Connection Error',
-        message: err instanceof Error ? err.message : 'Failed to initiate Gmail connection.',
+        title: 'Erro de Conexão',
+        message: err instanceof Error ? err.message : 'Falha ao iniciar conexão com Gmail.',
         persistent: true,
       })
       setConnectingProvider(null)
@@ -115,13 +99,12 @@ export function Settings() {
     setConnectingProvider('microsoft')
     try {
       const result = await api.connectMicrosoft()
-      // Redirect user to the OAuth consent screen
       window.location.href = result.authorization_url
     } catch (err) {
       addNotification({
         type: 'error',
-        title: 'Connection Error',
-        message: err instanceof Error ? err.message : 'Failed to initiate Microsoft connection.',
+        title: 'Erro de Conexão',
+        message: err instanceof Error ? err.message : 'Falha ao iniciar conexão com Outlook.',
         persistent: true,
       })
       setConnectingProvider(null)
@@ -129,7 +112,7 @@ export function Settings() {
   }
 
   const handleDisconnect = async (provider: string) => {
-    if (!confirm(`Disconnect ${provider} account? All associated data will be deleted within 24 hours.`)) {
+    if (!confirm(`Desconectar conta ${provider}? Os dados associados serão excluídos em até 24 horas.`)) {
       return
     }
 
@@ -138,16 +121,16 @@ export function Settings() {
       await api.disconnectAccount(provider)
       addNotification({
         type: 'info',
-        title: 'Account Disconnected',
-        message: `${provider} account disconnected. Data deletion has been initiated.`,
+        title: 'Conta Desconectada',
+        message: `Conta ${provider} desconectada. A exclusão dos dados foi iniciada.`,
         persistent: false,
       })
       fetchAccounts()
     } catch (err) {
       addNotification({
         type: 'error',
-        title: 'Disconnect Failed',
-        message: err instanceof Error ? err.message : `Failed to disconnect ${provider} account.`,
+        title: 'Falha ao Desconectar',
+        message: err instanceof Error ? err.message : `Falha ao desconectar conta ${provider}.`,
         persistent: true,
       })
     } finally {
@@ -155,62 +138,53 @@ export function Settings() {
     }
   }
 
-  const getProviderIcon = (provider: string): string => {
-    switch (provider.toLowerCase()) {
-      case 'gmail':
-        return '📧'
-      case 'microsoft':
-        return '📨'
-      default:
-        return '✉️'
-    }
-  }
-
   const getStatusLabel = (status: string): string => {
     switch (status) {
       case 'connected':
-        return 'Connected'
+        return 'Conectado'
       case 'disconnected':
-        return 'Requires Re-auth'
+        return 'Requer Reconexão'
       case 'pending':
-        return 'Pending'
+        return 'Pendente'
       default:
         return status
     }
   }
 
-  // Check if there are any accounts requiring re-authentication
   const accountsNeedingReauth = accounts.filter((a) => a.status === 'disconnected')
 
   return (
     <div className="page-container">
       <div className="page-header">
-        <h1>Settings</h1>
+        <div className="page-header-left">
+          <h1>⚙️ Configurações</h1>
+        </div>
         <div className="header-actions">
           <span className={`ws-status ${wsConnected ? 'ws-connected' : 'ws-disconnected'}`}>
-            {wsConnected ? '● Live' : '○ Offline'}
+            {wsConnected ? '● Conectado' : '○ Offline'}
           </span>
         </div>
       </div>
 
-      {/* Re-authentication banner */}
+      {/* Banner de reautenticação */}
       {accountsNeedingReauth.length > 0 && (
         <div className="reauth-banner">
           <div className="reauth-banner-icon">⚠️</div>
           <div className="reauth-banner-content">
-            <strong>Re-authentication Required</strong>
+            <strong>Reautenticação Necessária</strong>
             <p>
-              {accountsNeedingReauth.map((a) => a.provider).join(', ')} account(s) need to be
-              reconnected. Please disconnect and reconnect the affected account(s).
+              A(s) conta(s) {accountsNeedingReauth.map((a) => a.provider).join(', ')} precisa(m)
+              ser reconectada(s). Desconecte e reconecte a(s) conta(s) afetada(s).
             </p>
           </div>
         </div>
       )}
 
       <section className="settings-section">
-        <h2>Connected Accounts</h2>
+        <h2>🔗 Contas Conectadas</h2>
         <p className="section-description">
-          Connect your email accounts to enable automatic monitoring and response generation.
+          Conecte suas contas de e-mail para habilitar o monitoramento automático
+          e a geração de respostas pela IA.
         </p>
 
         {error && <div className="error-message">{error}</div>}
@@ -222,7 +196,7 @@ export function Settings() {
             disabled={connectingProvider !== null}
           >
             <span className="btn-icon">📧</span>
-            {connectingProvider === 'gmail' ? 'Connecting...' : 'Connect Gmail'}
+            {connectingProvider === 'gmail' ? 'Conectando...' : 'Conectar Gmail'}
           </button>
           <button
             onClick={handleConnectMicrosoft}
@@ -230,19 +204,20 @@ export function Settings() {
             disabled={connectingProvider !== null}
           >
             <span className="btn-icon">📨</span>
-            {connectingProvider === 'microsoft' ? 'Connecting...' : 'Connect Outlook'}
+            {connectingProvider === 'microsoft' ? 'Conectando...' : 'Conectar Outlook'}
           </button>
         </div>
 
         {loading ? (
-          <div className="loading">Loading accounts...</div>
+          <div className="loading-container">
+            <div className="loading-spinner"></div>
+            <span>Carregando contas...</span>
+          </div>
         ) : accounts.length === 0 ? (
-          <div className="empty-accounts">
-            <div className="empty-accounts-icon">🔗</div>
-            <p>No accounts connected yet.</p>
-            <p className="empty-accounts-hint">
-              Connect your Gmail or Outlook account to get started.
-            </p>
+          <div className="empty-state-card">
+            <div className="empty-state-icon">🔗</div>
+            <h3>Nenhuma conta conectada</h3>
+            <p>Conecte sua conta Gmail ou Outlook para começar a monitorar seus e-mails.</p>
           </div>
         ) : (
           <div className="accounts-list">
@@ -252,7 +227,9 @@ export function Settings() {
                 className={`account-card ${account.status === 'disconnected' ? 'account-card-warning' : ''}`}
               >
                 <div className="account-info">
-                  <span className="account-icon">{getProviderIcon(account.provider)}</span>
+                  <span className="account-icon">
+                    {account.provider === 'gmail' ? '📧' : '📨'}
+                  </span>
                   <div className="account-details">
                     <div className="account-primary">
                       <span className="account-provider">{account.provider}</span>
@@ -264,11 +241,11 @@ export function Settings() {
                       </span>
                       {account.last_sync && (
                         <span className="account-sync">
-                          Last sync: {new Date(account.last_sync).toLocaleString()}
+                          Última sincronização: {new Date(account.last_sync).toLocaleString('pt-BR')}
                         </span>
                       )}
                       <span className="account-connected-date">
-                        Connected: {new Date(account.connected_at).toLocaleDateString()}
+                        Conectado em: {new Date(account.connected_at).toLocaleDateString('pt-BR')}
                       </span>
                     </div>
                   </div>
@@ -283,7 +260,7 @@ export function Settings() {
                       className="btn btn-primary btn-sm"
                       disabled={connectingProvider !== null}
                     >
-                      Reconnect
+                      Reconectar
                     </button>
                   )}
                   <button
@@ -291,13 +268,38 @@ export function Settings() {
                     className="btn btn-danger btn-sm"
                     disabled={disconnectingProvider === account.provider}
                   >
-                    {disconnectingProvider === account.provider ? 'Disconnecting...' : 'Disconnect'}
+                    {disconnectingProvider === account.provider ? 'Desconectando...' : 'Desconectar'}
                   </button>
                 </div>
               </div>
             ))}
           </div>
         )}
+      </section>
+
+      {/* Seção de informações do sistema */}
+      <section className="settings-section" style={{ marginTop: '2rem' }}>
+        <h2>ℹ️ Sobre o Sistema</h2>
+        <div className="system-info">
+          <div className="system-info-item">
+            <strong>Modelo de IA:</strong> GPT-4o-mini (OpenAI)
+          </div>
+          <div className="system-info-item">
+            <strong>Orquestrador:</strong> LangGraph
+          </div>
+          <div className="system-info-item">
+            <strong>Agentes:</strong> Classificador, Resumidor, Gerador de Respostas
+          </div>
+          <div className="system-info-item">
+            <strong>Banco de Dados:</strong> PostgreSQL 16
+          </div>
+          <div className="system-info-item">
+            <strong>Fila de Tarefas:</strong> Celery + Redis
+          </div>
+          <div className="system-info-item">
+            <strong>Busca Vetorial:</strong> ChromaDB
+          </div>
+        </div>
       </section>
     </div>
   )

@@ -1,5 +1,5 @@
 /**
- * Filter bar component with category, priority, and date range filters.
+ * FilterBar — barra de filtros com categoria, prioridade e intervalo de datas.
  */
 
 import type { EmailCategory, PriorityLevel, EmailFilters } from '../types/email'
@@ -9,16 +9,20 @@ interface FilterBarProps {
   onFiltersChange: (filters: EmailFilters) => void
 }
 
-const CATEGORIES: EmailCategory[] = [
-  'Urgent',
-  'Personal',
-  'Informative',
-  'Spam',
-  'Promotional',
-  'Transactional',
+const CATEGORIES: { value: EmailCategory; label: string }[] = [
+  { value: 'Urgent', label: 'Urgente' },
+  { value: 'Personal', label: 'Pessoal' },
+  { value: 'Informative', label: 'Informativo' },
+  { value: 'Spam', label: 'Spam' },
+  { value: 'Promotional', label: 'Promocional' },
+  { value: 'Transactional', label: 'Transacional' },
 ]
 
-const PRIORITIES: PriorityLevel[] = ['High', 'Medium', 'Low']
+const PRIORITIES: { value: PriorityLevel; label: string }[] = [
+  { value: 'High', label: 'Alta' },
+  { value: 'Medium', label: 'Média' },
+  { value: 'Low', label: 'Baixa' },
+]
 
 export function FilterBar({ filters, onFiltersChange }: FilterBarProps) {
   const handleCategoryChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -39,42 +43,48 @@ export function FilterBar({ filters, onFiltersChange }: FilterBarProps) {
     onFiltersChange({ ...filters, date_to: e.target.value || undefined })
   }
 
+  const hasActiveFilters = filters.category || filters.priority || filters.date_from || filters.date_to
+
+  const clearFilters = () => {
+    onFiltersChange({})
+  }
+
   return (
     <div className="filter-bar">
       <div className="filter-group">
-        <label htmlFor="filter-category">Category</label>
+        <label htmlFor="filter-category">Categoria</label>
         <select
           id="filter-category"
           value={filters.category || ''}
           onChange={handleCategoryChange}
         >
-          <option value="">All Categories</option>
+          <option value="">Todas</option>
           {CATEGORIES.map((cat) => (
-            <option key={cat} value={cat}>
-              {cat}
+            <option key={cat.value} value={cat.value}>
+              {cat.label}
             </option>
           ))}
         </select>
       </div>
 
       <div className="filter-group">
-        <label htmlFor="filter-priority">Priority</label>
+        <label htmlFor="filter-priority">Prioridade</label>
         <select
           id="filter-priority"
           value={filters.priority || ''}
           onChange={handlePriorityChange}
         >
-          <option value="">All Priorities</option>
+          <option value="">Todas</option>
           {PRIORITIES.map((pri) => (
-            <option key={pri} value={pri}>
-              {pri}
+            <option key={pri.value} value={pri.value}>
+              {pri.label}
             </option>
           ))}
         </select>
       </div>
 
       <div className="filter-group">
-        <label htmlFor="filter-date-from">From</label>
+        <label htmlFor="filter-date-from">De</label>
         <input
           id="filter-date-from"
           type="date"
@@ -84,7 +94,7 @@ export function FilterBar({ filters, onFiltersChange }: FilterBarProps) {
       </div>
 
       <div className="filter-group">
-        <label htmlFor="filter-date-to">To</label>
+        <label htmlFor="filter-date-to">Até</label>
         <input
           id="filter-date-to"
           type="date"
@@ -92,6 +102,14 @@ export function FilterBar({ filters, onFiltersChange }: FilterBarProps) {
           onChange={handleDateToChange}
         />
       </div>
+
+      {hasActiveFilters && (
+        <div className="filter-group filter-clear">
+          <button onClick={clearFilters} className="btn btn-sm btn-outline">
+            ✕ Limpar filtros
+          </button>
+        </div>
+      )}
     </div>
   )
 }
