@@ -1,10 +1,16 @@
-"""Webhook endpoints for low-code automation integrations."""
+"""Webhook endpoints for low-code integrations (Zapier, Make.com).
+
+Provides endpoints to receive webhook calls from external automation platforms
+and send data to them, enabling no-code workflow automation.
+
+Validates: Requirements 4.9 (Low-Code/No-Code Integration)
+"""
 
 from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Dict, Any, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
@@ -14,203 +20,208 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/webhooks", tags=["webhooks"])
 
 
-class ZapierWebhookPayload(BaseModel):
-    """Zapier webhook payload schema."""
+# --- Request/Response models ---
+
+class ZapierPayload(BaseModel):
+    """Payload structure for Zapier webhooks."""
     
-    event_type: str = Field(..., description="Event type: email_processed, agent_completed, error_occurred")
-    data: Dict[str, Any] = Field(..., description="Event-specific data")
-    source: str = Field(default="zapier", description="Source system")
-    timestamp: Optional[str] = Field(default=None, description="Event timestamp")
+    event_type: str = Field(..., description="Type of event (email_processed, agent_completed, error)")
+    timestamp: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+    
+    # Email data
+    email: Optional[Dict[str, Any]] = Field(None, description="Email processing result")
+    
+    # System data
+    system: Optional[Dict[str, Any]] = Field(None, description="System metadata")
+    
+    # Error data (for error events)
+    error: Optional[Dict[str, Any]] = Field(None, description="Error information")
 
 
-class MakeWebhookPayload(BaseModel):
-    """Make.com webhook payload schema."""
+class MakePayload(BaseModel):
+    """Payload structure for Make.com webhooks."""
     
-    trigger_type: str = Field(default="scheduled", description="Trigger type: scheduled, manual")
-    request_data: Dict[str, Any] = Field(default_factory=dict, description="Request parameters")
-    source: str = Field(default="make", description="Source system")
+    trigger_type: str = Field(..., description="Type of trigger")
+    data: Dict[str, Any] = Field(..., description="Event data")
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional metadata")
 
 
 class WebhookResponse(BaseModel):
     """Standard webhook response."""
     
-    success: bool = Field(..., description="Request success status")
-    message: str = Field(..., description="Response message")
-    event_id: Optional[str] = Field(default=None, description="Generated event ID")
-    data: Optional[Dict[str, Any]] = Field(default=None, description="Response data")
+    status: str
+    message: str
+    received_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
 
 
-@router.post("/zapier", response_model=WebhookResponse)
-async def zapier_webhook(
-    payload: ZapierWebhookPayload,
-) -> WebhookResponse:
-    """
-    Zapier webhook endpoint for automation triggers.
+# --- Webhook Endpoints ---
+
+@router.post("/zapier")
+async def zapier_webhook(payload: ZapierPayload) -> WebhookResponse:
+    """Receive webhook calls from Zapier automation.
     
-    Supported event types:
-    - email_processed: When email pipeline completes
-    - agent_completed: When specific agent finishes processing
-    - error_occurred: When system error needs attention
+    This endpoint receives data from the AI Email Agent system and forwards
+    it to Zapier for automated workflow execution (Slack notifications, etc.).
     
-    Returns structured response for Zapier to process.
+    Expected payload structure:
+    {
+        "event_type": "email_processed",
+        "email": {
+            "id": "uuid",
+            "sender": "email@example.com",
+            "subject": "Email subject",
+            "category": "Urgent",
+            "priority": "High",
+            "confidence": 0.95,
+            "summary": "Brief email summary"
+        },
+        "system": {
+            "processing_time": "2.3s",
+            "model_used": "gpt-4o-mini"
+        }
+    }
     """
     try:
-        logger.info(f"Zapier webhook received: {payload.event_type} from {payload.source}")
+        logger.info(f"Received Zapier webhook: {payload.event_type}")
         
-        # Process different event types
-        response_data = {}
+        # Log payload for debugging (without sensitive data)
+        safe_payload = {
+            "event_type": payload.event_type,
+            "timestamp": payload.timestamp,
+            "has_email": payload.email is not None,
+            "has_system": payload.system is not None,
+            "has_error": payload.error is not None
+        }
+        logger.info(f"Zapier payload structure: {safe_payload}")
         
-        if payload.event_type == "email_processed":
-            response_data = _handle_email_processed(payload.data)
-        elif payload.event_type == "agent_completed":
-            response_data = _handle_agent_completed(payload.data)
-        elif payload.event_type == "error_occurred":
-            response_data = _handle_error_occurred(payload.data)
-        else:
+        # Validate required fields based on event type
+        if payload.event_type == "email_processed" and not payload.email:
             raise HTTPException(
                 status_code=400, 
-                detail=f"Unsupported event type: {payload.event_type}"
+                detail="Email data required for email_processed event"
             )
         
-        # Generate event ID for tracking
-        event_id = f"evt_{payload.event_type}_{hash(str(payload.data)) % 100000}"
-        
-        logger.info(f"Zapier webhook processed successfully: {event_id}")
+        if payload.event_type == "error" and not payload.error:
+            raise HTTPException(
+                status_code=400,
+                detail="Error data required for error event"
+            )
         
         return WebhookResponse(
-            success=True,
-            message=f"Event {payload.event_type} processed successfully",
-            event_id=event_id,
-            data=response_data
+            status="success",
+            message=f"Webhook received: {payload.event_type}"
         )
         
-    except HTTPException:
-        raise
     except Exception as e:
-        logger.error(f"Zapier webhook error: {str(e)}")
-        raise HTTPException(
-            status_code=500, 
-            detail=f"Webhook processing failed: {str(e)}"
-        )
+        logger.error(f"Error processing Zapier webhook: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Webhook processing failed: {str(e)}")
 
 
-@router.post("/make", response_model=WebhookResponse)
-async def make_webhook(
-    payload: MakeWebhookPayload,
-) -> WebhookResponse:
-    """
-    Make.com webhook endpoint for visual automation.
+@router.post("/make")
+async def make_webhook(payload: MakePayload) -> WebhookResponse:
+    """Receive webhook calls from Make.com automation.
     
-    Accepts flexible payload structure for Make.com scenarios.
-    Returns formatted data suitable for Make.com processing.
+    This endpoint receives data from Make.com scenarios for advanced
+    visual workflow automation.
     """
     try:
-        logger.info(f"Make.com webhook received: {payload.trigger_type} from {payload.source}")
+        logger.info(f"Received Make.com webhook: {payload.trigger_type}")
         
-        # Extract recent processed emails (mock data for now)
-        recent_emails = await _get_recent_processed_emails()
-        
-        # Format for Make.com
-        formatted_data = {
-            "total_processed": len(recent_emails),
-            "emails": [
-                {
-                    "id": email["id"],
-                    "subject": email["subject"][:50],  # Truncate for readability
-                    "classification": email["classification"],
-                    "confidence": email["confidence"],
-                    "processed_at": email["processed_at"]
-                }
-                for email in recent_emails[:5]  # Limit to 5 most recent
-            ],
-            "summary_message": f"📊 Processed {len(recent_emails)} emails in the last 15 minutes",
-            "timestamp": datetime.utcnow().isoformat()
-        }
-        
-        logger.info(f"Make.com webhook processed: {len(recent_emails)} emails")
+        # Log payload structure
+        logger.info(f"Make.com payload keys: {list(payload.data.keys())}")
         
         return WebhookResponse(
-            success=True,
-            message="Recent emails retrieved successfully",
-            event_id=f"make_{hash(str(payload.request_data)) % 100000}",
-            data=formatted_data
+            status="success", 
+            message=f"Make.com webhook received: {payload.trigger_type}"
         )
         
     except Exception as e:
-        logger.error(f"Make.com webhook error: {str(e)}")
-        raise HTTPException(
-            status_code=500, 
-            detail=f"Make.com webhook failed: {str(e)}"
-        )
+        logger.error(f"Error processing Make.com webhook: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Webhook processing failed: {str(e)}")
 
 
-def _handle_email_processed(data: Dict[str, Any]) -> Dict[str, Any]:
-    """Handle email processing completion events."""
-    return {
-        "email_id": data.get("email_id"),
-        "classification": data.get("classification"),
-        "summary": data.get("summary", "")[:100],  # Truncate for Slack
-        "confidence": data.get("confidence", 0),
-        "status": "completed",
-        "notification_text": f"📧 Email {data.get('email_id')} processed - {data.get('classification', 'Unknown')}"
-    }
+# --- Test Endpoints ---
 
-
-def _handle_agent_completed(data: Dict[str, Any]) -> Dict[str, Any]:
-    """Handle agent completion events."""
-    return {
-        "agent": data.get("agent_name"),
-        "email_id": data.get("email_id"),
-        "execution_time": data.get("execution_time", 0),
-        "status": "completed",
-        "notification_text": f"🤖 Agent {data.get('agent_name')} completed processing"
-    }
-
-
-def _handle_error_occurred(data: Dict[str, Any]) -> Dict[str, Any]:
-    """Handle error events that need attention."""
-    return {
-        "error_type": data.get("error_type"),
-        "component": data.get("component"),
-        "severity": data.get("severity", "medium"),
-        "notification_text": f"🚨 Error in {data.get('component')}: {data.get('error_type')}"
-    }
-
-
-async def _get_recent_processed_emails() -> list[Dict[str, Any]]:
-    """Get emails processed in the last 15 minutes.
+@router.post("/test/zapier")
+async def test_zapier_webhook() -> WebhookResponse:
+    """Send a test payload to Zapier webhook URL.
     
-    TODO: Replace with actual database query when integrating with orchestrator.
-    For now, returns mock data for testing purposes.
+    Used for testing the integration during setup.
     """
-    # Mock data for testing - will be replaced with real database query
-    mock_emails = [
-        {
-            "id": "email_001",
-            "subject": "Customer inquiry about pricing",
-            "classification": "support_request",
-            "confidence": 0.89,
-            "processed_at": datetime.utcnow().isoformat()
-        },
-        {
-            "id": "email_002", 
-            "subject": "Meeting request for next week",
-            "classification": "meeting_request",
-            "confidence": 0.95,
-            "processed_at": datetime.utcnow().isoformat()
-        }
-    ]
+    import httpx
+    from src.config import get_settings
     
-    logger.info(f"Retrieved {len(mock_emails)} recent processed emails (mock data)")
-    return mock_emails
+    settings = get_settings()
+    
+    if not settings.zapier_webhook_url:
+        raise HTTPException(
+            status_code=400,
+            detail="Zapier webhook URL not configured. Set ZAPIER_WEBHOOK_URL in .env"
+        )
+    
+    # Create test payload
+    test_payload = {
+        "event_type": "email_processed",
+        "timestamp": datetime.utcnow().isoformat(),
+        "email": {
+            "id": "test-email-123",
+            "sender": "teste@exemplo.com",
+            "subject": "🧪 Teste de Integração Zapier",
+            "category": "Urgent",
+            "priority": "High", 
+            "confidence": 0.98,
+            "summary": "Este é um teste da integração com Zapier. Se você está vendo isso no Slack, funcionou! 🎉"
+        },
+        "system": {
+            "processing_time": "1.2s",
+            "model_used": "gpt-4o-mini",
+            "environment": "test"
+        }
+    }
+    
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(
+                settings.zapier_webhook_url,
+                json=test_payload,
+                headers={"Content-Type": "application/json"}
+            )
+            
+        if response.status_code == 200:
+            logger.info("Test payload sent to Zapier successfully")
+            return WebhookResponse(
+                status="success",
+                message=f"Test payload sent to Zapier (status: {response.status_code})"
+            )
+        else:
+            logger.warning(f"Zapier returned status {response.status_code}: {response.text}")
+            return WebhookResponse(
+                status="warning",
+                message=f"Zapier returned status {response.status_code}, but webhook may still work"
+            )
+            
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=408, detail="Timeout connecting to Zapier webhook")
+    except Exception as e:
+        logger.error(f"Failed to send test to Zapier: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to send test: {str(e)}")
 
 
 @router.get("/health")
-async def webhook_health_check():
-    """Health check endpoint for webhook service."""
+async def webhook_health() -> Dict[str, Any]:
+    """Check webhook system health and configuration."""
+    from src.config import get_settings
+    
+    settings = get_settings()
+    
     return {
         "status": "healthy",
-        "service": "webhooks",
-        "endpoints": ["/zapier", "/make"],
-        "timestamp": datetime.utcnow().isoformat()
+        "webhooks_enabled": settings.enable_webhooks,
+        "zapier_configured": bool(settings.zapier_webhook_url),
+        "make_configured": bool(settings.make_webhook_url),
+        "endpoints": {
+            "zapier": "/api/v1/webhooks/zapier",
+            "make": "/api/v1/webhooks/make",
+            "test_zapier": "/api/v1/webhooks/test/zapier"
+        }
     }

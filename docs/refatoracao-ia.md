@@ -209,7 +209,7 @@ else:
 
 ## Resumo de Princípios Aplicados
 
-| Princípio | Onde aplicado |
+| Princípio | Onde aplicado|
 |-----------|--------------|
 | **S** - Single Responsibility | FeedbackLearner separado, routers por domínio |
 | **O** - Open/Closed | Provider configurável via .env |

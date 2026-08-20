@@ -112,13 +112,15 @@ export function ReviewSection({ emails, onDismiss }: ReviewSectionProps) {
                 <td className="email-subject">{email.subject}</td>
                 <td className="email-timestamp">{formatDate(email.processing_timestamp)}</td>
                 <td>
-                  <button
-                    onClick={(e) => handleDismiss(e, email.email_id)}
-                    className="btn btn-sm btn-outline"
-                    title="Dispensar da revisão"
-                  >
-                    ✕
-                  </button>
+                  <div className="table-actions">
+                    <button
+                      onClick={(e) => handleDismiss(e, email.email_id)}
+                      className="btn btn-outline"
+                      title="Dispensar da revisão"
+                    >
+                      ✕
+                    </button>
+                  </div>
                 </td>
               </tr>
             ))}

@@ -1341,3 +1341,53 @@ td {
   align-items: center;
   margin-bottom: 1rem;
 }
+
+/* Action buttons in tables */
+.table-actions {
+  display: flex;
+  gap: 0.25rem;
+  align-items: center;
+  justify-content: center;
+}
+
+.table-actions .btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+  height: 32px;
+  padding: 0.25rem;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  transition: all 0.2s;
+}
+
+.table-actions .btn:hover:not(:disabled) {
+  transform: scale(1.05);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+.table-actions .btn-danger {
+  background-color: #ba5a64;
+  color: #fff;
+}
+
+.table-actions .btn-outline {
+  background: transparent;
+  border: 1px solid #94a3b8;
+  color: #475569;
+}
+
+.table-actions .btn-outline:hover {
+  background: #f1f5f9;
+  border-color: #64748b;
+}
+
+/* Ensure action column doesn't get too wide */
+th:last-child,
+td:last-child {
+  width: 80px;
+  text-align: center;
+}

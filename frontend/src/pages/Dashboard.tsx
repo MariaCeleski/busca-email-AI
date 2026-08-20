@@ -193,7 +193,13 @@ export function Dashboard() {
           <span>Carregando e-mails...</span>
         </div>
       ) : (
-        <EmailList emails={emails} />
+        <EmailList 
+          emails={emails} 
+          onEmailDeleted={() => { 
+            refresh()
+            refreshReview()
+          }} 
+        />
       )}
 
       {/* Paginação */}

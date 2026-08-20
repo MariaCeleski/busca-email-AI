@@ -48,6 +48,76 @@ from src.models.summary import SummaryResult
 logger = logging.getLogger(__name__)
 
 
+async def _trigger_webhook(event_type: str, email_data: Dict = None, error_data: Dict = None) -> None:
+    """Trigger webhook notification to external systems (Zapier, Make.com).
+    
+    Sends event data to configured webhook URLs for automation workflows.
+    Non-blocking and error-tolerant — failures don't affect main pipeline.
+    
+    Args:
+        event_type: Type of event (email_processed, agent_completed, error)
+        email_data: Email processing result data
+        error_data: Error information (if applicable)
+    """
+    settings = get_settings()
+    
+    if not settings.enable_webhooks:
+        return
+    
+    # Prepare webhook payload
+    payload = {
+        "event_type": event_type,
+        "timestamp": datetime.utcnow().isoformat(),
+    }
+    
+    if email_data:
+        payload["email"] = email_data
+        
+    if error_data:
+        payload["error"] = error_data
+        
+    # Add system metadata
+    payload["system"] = {
+        "processing_time": email_data.get("processing_time") if email_data else None,
+        "model_used": "gpt-4o-mini",
+        "environment": "development" if settings.debug else "production"
+    }
+    
+    # Send to Zapier (if configured)
+    if settings.zapier_webhook_url:
+        try:
+            async with httpx.AsyncClient(timeout=settings.webhook_timeout_seconds) as client:
+                response = await client.post(
+                    settings.zapier_webhook_url,
+                    json=payload,
+                    headers={"Content-Type": "application/json"}
+                )
+                logger.info(f"Zapier webhook sent: {event_type} (status: {response.status_code})")
+        except Exception as e:
+            logger.warning(f"Failed to send Zapier webhook: {str(e)}")
+    
+    # Send to Make.com (if configured)
+    if settings.make_webhook_url:
+        try:
+            make_payload = {
+                "trigger_type": event_type,
+                "data": payload,
+                "metadata": {
+                    "source": "ai-email-agent",
+                    "version": "1.0.0"
+                }
+            }
+            async with httpx.AsyncClient(timeout=settings.webhook_timeout_seconds) as client:
+                response = await client.post(
+                    settings.make_webhook_url,
+                    json=make_payload,
+                    headers={"Content-Type": "application/json"}
+                )
+                logger.info(f"Make.com webhook sent: {event_type} (status: {response.status_code})")
+        except Exception as e:
+            logger.warning(f"Failed to send Make.com webhook: {str(e)}")
+
+
 # Estado que flui através do workflow LangGraph.
 # Contém o e-mail original, resultados intermediários de cada agente,
 # contadores de retry e flags de controle.
@@ -372,16 +442,39 @@ def build_email_workflow(
         else:
             stage = WorkflowStage.COMPLETED.value
 
-        # Trigger final webhook for email processing completion
-        if orchestrator and stage == WorkflowStage.COMPLETED.value:
-            email_data = {
-                "email": state.get("email").model_dump(mode='json') if state.get("email") else {},
-                "classification": state.get("classification").model_dump(mode='json') if state.get("classification") else {},
-                "summary": state.get("summary").model_dump(mode='json') if state.get("summary") else {},
-                "draft_reply": state.get("draft_reply").model_dump(mode='json') if state.get("draft_reply") else {},
-                "stage": stage
-            }
-            await orchestrator._trigger_webhook("email_processed", email_data)
+        # Trigger webhook for email processing completion
+        try:
+            # Prepare email data for webhook
+            email_data = {}
+            
+            if state.get("email"):
+                raw_email = state["email"]
+                email_data.update({
+                    "id": getattr(raw_email, 'message_id', 'unknown'),
+                    "sender": getattr(raw_email, 'sender', 'unknown'),
+                    "subject": getattr(raw_email, 'subject', ''),
+                    "body_preview": (getattr(raw_email, 'body', '') or '')[:200] + "..." if len(getattr(raw_email, 'body', '') or '') > 200 else getattr(raw_email, 'body', '')
+                })
+            
+            if state.get("classification"):
+                classification = state["classification"]
+                email_data.update({
+                    "category": getattr(classification, 'category', 'Unknown'),
+                    "priority": getattr(classification, 'priority', 'Medium'),
+                    "confidence": getattr(classification, 'confidence', 0.0)
+                })
+            
+            if state.get("summary"):
+                summary = state["summary"]
+                email_data["summary"] = getattr(summary, 'summary', 'No summary available')
+            
+            email_data["stage"] = stage
+            
+            # Send webhook notification
+            await _trigger_webhook("email_processed", email_data)
+            
+        except Exception as e:
+            logger.warning(f"Failed to send webhook notification: {str(e)}")
 
         return {"current_stage": stage}
 
