@@ -335,7 +335,7 @@ python test_zapier_integration.py
 - **Make.com**: [`docs/make-com-setup-guide.md`](docs/make-com-setup-guide.md)  
 - **Integração Completa**: [`docs/zapier-integration-complete.md`](docs/zapier-integration-complete.md)
 
-**Conformidade SCTEC 4.9**: ✅ **Automação Low-Code/No-Code implementada** (Zapier + Make.com)
+**Conformidade SCTEC 4.9**: ✅ **Automação Low-Code/No-Code implementada** (Zapier integrado)
 
 ---
 

@@ -708,6 +708,51 @@ async def dismiss_from_review(
     }
 
 
+class BulkDeleteRequest(BaseModel):
+    """Request body for bulk delete."""
+    email_ids: list[str] = Field(..., min_items=1)
+
+
+@router.delete("")
+async def bulk_delete_emails(
+    body: BulkDeleteRequest,
+    session: AsyncSession = Depends(get_session),
+):
+    """Excluir múltiplos e-mails de uma vez.
+
+    Recebe uma lista de IDs e remove cada email e seus draft_replies associados.
+    IDs inválidos ou inexistentes são ignorados silenciosamente.
+    """
+    from sqlalchemy import delete as sql_delete
+    from src.models.orm import DraftReply as DraftReplyORM
+
+    deleted_count = 0
+    for raw_id in body.email_ids:
+        try:
+            email_id = uuid.UUID(raw_id)
+        except ValueError:
+            continue
+
+        email_repo = ProcessedEmailRepository(session)
+        email = await email_repo.get_by_id(email_id)
+        if email is None:
+            continue
+
+        await session.execute(
+            sql_delete(DraftReplyORM).where(DraftReplyORM.email_id == email_id)
+        )
+        await session.delete(email)
+        deleted_count += 1
+
+    await session.commit()
+
+    return {
+        "status": "deleted",
+        "deleted_count": deleted_count,
+        "message": f"{deleted_count} email(s) excluído(s) com sucesso.",
+    }
+
+
 @router.delete("/{email_id}")
 async def delete_email(
     email_id: uuid.UUID,

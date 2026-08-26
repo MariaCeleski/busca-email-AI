@@ -55,11 +55,12 @@ export function Dashboard() {
     setFetchStatus(null)
     try {
       // Usar o endpoint demo que realmente insere dados no banco
-      const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8080'}/api/v1/emails/demo`, {
+      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+      const response = await fetch(`${apiUrl}/api/v1/emails/demo`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-API-Key': localStorage.getItem('ai_email_agent_api_key') || '',
+          'X-API-Key': localStorage.getItem('ai_email_agent_api_key') || import.meta.env.VITE_API_KEY || '',
         },
       })
       
@@ -73,9 +74,13 @@ export function Dashboard() {
         message: data.message || 'E-mails processados com sucesso!' 
       })
       
-      // Refresh imediatamente para mostrar os novos dados
+      // Refresh imediatamente e novamente após 2s para capturar dados processados
       refresh()
       refreshReview()
+      setTimeout(() => {
+        refresh()
+        refreshReview()
+      }, 2000)
     } catch (err) {
       setFetchStatus({
         type: 'error',

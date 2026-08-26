@@ -183,6 +183,24 @@ body {
 .btn-danger { background-color: #dc3545; color: #fff; }
 .btn-sm { padding: 0.35rem 0.75rem; font-size: 0.8rem; }
 
+/* Bulk action bar */
+.bulk-action-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.6rem 1rem;
+  margin-bottom: 0.5rem;
+  background: #fff8e1;
+  border: 1px solid #f59e0b;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  color: #92400e;
+}
+.bulk-action-bar span { flex: 1; font-weight: 500; }
+
+/* Selected email row */
+.email-row--selected { background-color: #fef9c3 !important; }
+
 .btn-outline {
   background: transparent;
   border: 1px solid #94a3b8;

@@ -168,6 +168,15 @@ export const api = {
    */
   deleteEmail: (emailId: string) =>
     request<{ message: string }>(`/emails/${emailId}`, { method: 'DELETE' }),
+
+  /**
+   * DELETE /api/v1/emails — bulk delete emails by IDs
+   */
+  bulkDeleteEmails: (emailIds: string[]) =>
+    request<{ deleted_count: number; message: string }>('/emails', {
+      method: 'DELETE',
+      body: { email_ids: emailIds },
+    }),
 }
 
 export default api
