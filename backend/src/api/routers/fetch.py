@@ -240,6 +240,63 @@ async def insert_demo_emails(background_tasks: BackgroundTasks):
                     except Exception as e:
                         logger.warning("Demo summarization failed: %s", e)
 
+                    # --- Etapa 3: Gerar draft_reply (resposta sugerida para aprovar/rejeitar) ---
+                    try:
+                        from openai import AsyncOpenAI
+                        from src.models.orm import DraftReply as DraftReplyORM
+
+                        ai_client = AsyncOpenAI(api_key=settings.openai_api_key)
+                        response_prompt = f"""Você é um assistente que gera respostas profissionais para e-mails.
+Gere uma resposta para o seguinte e-mail:
+
+De: {email_data["sender"]}
+Assunto: {email_data["subject"]}
+Corpo: {email_data["body"]}
+
+Instruções:
+- Resposta no máximo 200 palavras
+- Tom profissional e cordial
+- Assunto sugerido no máximo 100 caracteres
+- Responda diretamente ao conteúdo do e-mail
+
+Retorne APENAS JSON:
+{{"reply_body": "<texto da resposta>", "suggested_subject": "<assunto sugerido>"}}"""
+
+                        ai_response = await ai_client.chat.completions.create(
+                            model=settings.openai_model,
+                            messages=[{"role": "user", "content": response_prompt}],
+                        )
+                        raw_output = ai_response.choices[0].message.content or ""
+
+                        import json
+                        import re
+                        cleaned = raw_output.strip()
+                        if cleaned.startswith("```"):
+                            cleaned = re.sub(r'^```(?:json)?\s*', '', cleaned)
+                            cleaned = re.sub(r'\s*```$', '', cleaned)
+
+                        parsed = json.loads(cleaned)
+                        reply_body = parsed.get("reply_body", "Obrigado pelo contato.")
+                        suggested_subject = parsed.get("suggested_subject", f"Re: {email_data['subject']}")[:150]
+
+                        from src.services.guardrails import validate_response
+                        guardrail_check = validate_response(reply_body)
+                        if not guardrail_check.is_safe:
+                            reply_body = f"⚠️ GUARDRAIL: {guardrail_check.message}\n\n---\n\n{reply_body}"
+
+                        draft = DraftReplyORM(
+                            email_id=email_record.id,
+                            reply_body=reply_body,
+                            suggested_subject=suggested_subject,
+                            referenced_email_ids=[],
+                            status="pending",
+                            generated_at=datetime.utcnow(),
+                        )
+                        session2.add(draft)
+                        logger.info("Draft reply adicionado para '%s'", email_data["subject"])
+                    except Exception as e:
+                        logger.error("Demo draft_reply generation FAILED for '%s': %s", email_data["subject"], e, exc_info=True)
+
                     await repo2.update_workflow_stage(email_record.id, workflow_stage="completed")
                     processed_count += 1
 
@@ -293,7 +350,7 @@ async def insert_demo_emails(background_tasks: BackgroundTasks):
         return FetchAcknowledgment(
             status="demo_complete",
             task_id=None,
-            message=f"{inserted} e-mails inseridos, {processed_count} processados (classificar + resumir + Zapier).",
+            message=f"{inserted} e-mails inseridos, {processed_count} processados (classificar + resumir + resposta).",
         )
     except Exception as exc:
         logger.error("Demo failed: %s", exc)
