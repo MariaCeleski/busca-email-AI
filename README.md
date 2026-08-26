@@ -4,6 +4,7 @@ Sistema inteligente que automatiza a triagem, classificação, resumo e geraçã
 
 ### Link dos slides: https://canva.link/2wtiha5ig6v78sf
 ### Link do projeto no Github: https://github.com/MariaCeleski/busca-email-AI/tree/develop
+### 📋 Kanban do Projeto: https://github.com/users/MariaCeleski/projects/4
 ---
 
 ## 1. Problema
