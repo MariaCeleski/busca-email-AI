@@ -1,10 +1,11 @@
-# AI Email Agent — Sistema Multi-Agente de Gestão de E-mails
+# AI Email Agent — Sistema Multi-Agente de Gestão de E-mails - Projeto final SCTEC
 
 Sistema inteligente que automatiza a triagem, classificação, resumo e geração de respostas para e-mails usando agentes de IA orquestrados com **LangGraph**.
 
-### Link dos slides: https://canva.link/2wtiha5ig6v78sf
-### Link do projeto no Github: https://github.com/MariaCeleski/busca-email-AI/tree/develop
-### 📋 Kanban do Projeto: https://github.com/users/MariaCeleski/projects/4
+### 1 - Link do video no youtube:https://youtu.be/I16b1q2hAEk
+### 2 - Link dos slides: https://canva.link/2wtiha5ig6v78sf
+### 3 - Link do projeto no Github: https://github.com/MariaCeleski/busca-email-AI/tree/main
+### 4 - Link Kanban do Projeto: https://github.com/users/MariaCeleski/projects/4
 ---
 
 ## 1. Problema
@@ -88,6 +89,7 @@ Este sistema é um agente porque:
 | **ChromaDB** | Busca semântica de e-mails similares para contextualizar o tom da resposta |
 | **PostgreSQL** | Persistência de e-mails processados, rascunhos e feedback |
 | **Redis + Celery** | Processamento assíncrono em background |
+| **Zapier + Slack** | Automação Low-Code: webhooks para notificações em tempo real no Slack |
 
 ---
 
@@ -153,7 +155,7 @@ npm install
 npm run dev
 ```
 
-Acesse: http://localhost:3000 — Login com API Key: `dev-api-key-2024`
+Acesse: http://localhost:3001 — Login com API Key: `dev-api-key-2024`
 
 ---
 
@@ -198,145 +200,69 @@ Acesse: http://localhost:3000 — Login com API Key: `dev-api-key-2024`
 
 ## 10. Automação Low-Code/No-Code 
 
-### 🔌 Integração com Zapier
+### 🔌 Integração Zapier + Slack (Implementada e Funcional)
 
-O sistema possui webhooks dedicados para integração com plataformas low-code, permitindo automações visuais sem necessidade de programação.
+O sistema envia webhooks automáticos para o Zapier após cada email processado. O Zapier repassa as notificações para o Slack em tempo real, demonstrando integração Low-Code empresarial sem necessidade de programação adicional.
 
-**Endpoint**: `/api/v1/webhooks/zapier`
-**Autenticação**: X-API-Key header
-**Status**: ✅ **OPERACIONAL**
+**Fluxo completo:**
+```
+Dashboard (botão Demo) → Backend processa email com IA → 
+Webhook enviado ao Zapier → Zapier envia para Slack → 
+Notificação aparece no canal #ai-email-notifications
+```
 
 #### Configuração Zapier + Slack
 
-1. **Criar Zap**: Webhooks by Zapier → Slack
+1. **Trigger**: Webhooks by Zapier (Catch Hook)
 2. **URL do Webhook**: `https://hooks.zapier.com/hooks/catch/28584917/4t5ocoi/`
-3. **Trigger**: Receber payload do sistema quando email é processado
-4. **Ação**: Enviar notificação no Slack
+3. **Ação**: Send Channel Message in Slack → `#ai-email-notifications`
+4. **Campo a mapear**: `message` (texto pré-formatado enviado pelo backend)
 
-**Exemplo de Payload Enviado**:
+**Payload enviado pelo backend:**
 ```json
 {
   "event_type": "email_processed",
-  "timestamp": "2024-12-19T10:30:00Z",
+  "message": "📧 Email processado!\nDe: ceo@empresa.com\nAssunto: URGENTE: Sistema fora do ar\nCategoria: Urgent\nPrioridade: High\nConfiança: 92%",
   "data": {
-    "email_id": "email_123",
-    "classification": {
-      "category": "Urgent",
-      "priority": "High"
-    },
-    "summary": "Cliente reportou sistema fora do ar...",
-    "draft_reply": "Recebido. Nossa equipe está verificando..."
-  }
+    "email_id": "uuid-aqui",
+    "email": { "sender": "ceo@empresa.com", "subject": "...", "provider": "gmail" },
+    "classification": { "category": "Urgent", "priority": "High", "confidence": 0.92 }
+  },
+  "source": "demo_pipeline"
 }
 ```
 
-**Resultado no Slack**:
+**Resultado no Slack (canal #ai-email-notifications):**
 ```
-🚨 Email Urgente Processado
-📧 De: cliente@empresa.com
-🏷️ Categoria: Urgent (Prioridade: High) 
-📝 Resumo: Cliente reportou sistema fora do ar...
-💬 Rascunho: "Recebido. Nossa equipe está verificando..."
-```
-
-#### Triggers Automatizados
-
-O sistema envia webhooks automaticamente para:
-- **email_processed**: Quando um email é classificado e processado
-- **agent_completed**: Quando um agente específico finaliza sua tarefa  
-- **error_occurred**: Quando há erro no pipeline de processamento
-
-### 🎨 Integração com Make.com
-
-**Endpoint**: `/api/v1/webhooks/make`
-**Formato**: Automações visuais com interface drag-and-drop
-
-#### Cenários Implementados
-
-**1. Monitor de Sistema** (Timer → API Check → Webhook):
-- Executa a cada 5 minutos
-- Verifica estatísticas do sistema (`/api/v1/emails/stats`)
-- Envia dados para webhook Make.com
-
-**2. Gerador de Relatórios** (Timer Diário → Coleta Dados → Google Sheets):
-- Executa diariamente às 9:00
-- Gera relatório de emails processados
-- Salva automaticamente em planilha
-
-**3. Alertas Condicionais** (HTTP Trigger → Filter → Notification):
-- Recebe evento do sistema
-- Filtra apenas emails urgentes
-- Dispara alerta via email/SMS
-
-#### Template Make.com
-```json
-{
-  "name": "AI Email Agent - Monitor",
-  "modules": [
-    {
-      "type": "timer",
-      "interval": 300
-    },
-    {
-      "type": "http",
-      "url": "http://localhost:8080/api/v1/webhooks/make",
-      "method": "POST",
-      "body": {
-        "event": "health_monitor",
-        "scenario_id": "basic_monitor"
-      }
-    }
-  ]
-}
+� Email processado!
+De: ceo@empresa.com
+Assunto: URGENTE: Sistema fora do ar - cliente reclamando
+Categoria: Urgent
+Prioridade: High
+Confiança: 92%
 ```
 
-### 📊 Monitoramento de Integrações
+#### Triggers Automáticos
 
-**Logs Estruturados**:
+O sistema envia webhooks automaticamente quando:
+- **Demo é clicado**: 7 emails são processados, cada um dispara um webhook
+- **email_processed**: Classificação + sumarização concluídas com sucesso
+
+#### Variável de Ambiente
+
 ```bash
-# Visualizar webhooks enviados
-curl -H "X-API-Key: dev-api-key-2024" \
-  http://localhost:8080/api/v1/webhooks/logs
-
-# Estatísticas de uso
-curl -H "X-API-Key: dev-api-key-2024" \
-  http://localhost:8080/api/v1/webhooks/stats
-```
-
-**Métricas Disponíveis**:
-- Número de webhooks enviados (últimas 24h)
-- Taxa de sucesso/erro por plataforma
-- Tempo médio de resposta
-- Eventos mais frequentes
-
-### 🔧 Configuração de Desenvolvimento
-
-1. **Instalar ngrok** (para testes locais):
-```bash
-ngrok http 8080
-# URL pública: https://abc123.ngrok.io
-```
-
-2. **Configurar Webhook URL**:
-```bash
-# No backend/.env
-ZAPIER_WEBHOOK_URL=https://hooks.zapier.com/hooks/catch/28584917/4t5ocoi/
-MAKE_WEBHOOK_ENABLED=true
-```
-
-3. **Testar Integração**:
-```bash
-# Script de teste incluído
-python test_zapier_integration.py
+# backend/.env
+ZAPIER_WEBHOOK_URL=https://hooks.zapier.com/hooks/catch/SEU_ID/SEU_HOOK/
+ENABLE_WEBHOOKS=true
 ```
 
 ### 📚 Documentação Complementar
 
-- **Zapier**: [`docs/zapier-setup-guide.md`](docs/zapier-setup-guide.md)
-- **Make.com**: [`docs/make-com-setup-guide.md`](docs/make-com-setup-guide.md)  
-- **Integração Completa**: [`docs/zapier-integration-complete.md`](docs/zapier-integration-complete.md)
+- **Zapier Setup**: [`docs/zapier-setup-guide.md`](docs/zapier-setup-guide.md)
+- **Demo Zapier**: [`docs/demo-zapier-slack-video.md`](docs/demo-zapier-slack-video.md)
+- **Passo a Passo Vídeo**: [`docs/passo-a-passo-video-zapier.md`](docs/passo-a-passo-video-zapier.md)
 
-**Conformidade SCTEC 4.9**: ✅ **Automação Low-Code/No-Code implementada** (Zapier integrado)
+**Conformidade SCTEC 4.9**: ✅ **Automação Low-Code/No-Code implementada** (Zapier + Slack integrados)
 
 ---
 
@@ -415,7 +341,8 @@ python test_zapier_integration.py
 | IA | OpenAI GPT-4o-mini, ChromaDB (embeddings) |
 | Frontend | React 18, TypeScript, Vite |
 | Infraestrutura | PostgreSQL 16, Redis 7, Docker Compose |
-| Testes | pytest (511 testes), TypeScript compiler |
+| Low-Code | Zapier (webhooks) + Slack (notificações) |
+| Testes | pytest (489 testes), TypeScript compiler |
 | CI/CD | GitHub Actions |
 
 ---
@@ -434,7 +361,9 @@ Copie `backend/.env.example` para `backend/.env` e preencha:
 | `ENCRYPTION_KEY` | Chave AES-256 para tokens (base64, 32 bytes) | `(gerada automaticamente)` |
 | `GOOGLE_CLIENT_ID` | OAuth Google (opcional) | `208172...apps.googleusercontent.com` |
 | `GOOGLE_CLIENT_SECRET` | Secret OAuth Google | `GOCSPX-...` |
-| `CORS_ORIGINS` | Origins permitidas para CORS | `http://localhost:3000` |
+| `CORS_ORIGINS` | Origins permitidas para CORS | `http://localhost:3001` |
+| `ZAPIER_WEBHOOK_URL` | URL do webhook Zapier para notificações Slack | `https://hooks.zapier.com/hooks/catch/...` |
+| `ENABLE_WEBHOOKS` | Habilitar envio de webhooks | `true` |
 
 ---
 
