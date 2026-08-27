@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, BackgroundTasks
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -73,7 +73,7 @@ async def trigger_fetch():
 # Isso permite testar o fluxo de aprovação/rejeição no frontend sem Gmail.
 # =============================================================================
 @router.post("/demo", response_model=FetchAcknowledgment)
-async def insert_demo_emails():
+async def insert_demo_emails(background_tasks: BackgroundTasks):
     """Insere e-mails de demonstração e processa pipeline COMPLETO com IA em background.
 
     Retorna imediatamente após inserir os emails no banco.
@@ -185,73 +185,68 @@ async def insert_demo_emails():
             await session.commit()
 
         # =====================================================================
-        # PIPELINE COMPLETO em background: Classificar → Resumir → Gerar Resposta
-        # Roda assincronamente para não bloquear a resposta ao frontend
+        # PIPELINE: Classificar emails e disparar Zapier
+        # Executa no mesmo request para garantir que funcione
         # =====================================================================
-        async def run_pipeline_background(demo_emails_data):
-            """Roda o pipeline de IA em background após inserção."""
-            from src.agents.classifier import ClassifierAgent, ClassificationError
-            from src.agents.summarizer import SummarizerAgent
-            from src.models.email import RawEmail
+        from src.agents.classifier import ClassifierAgent, ClassificationError
+        from src.agents.summarizer import SummarizerAgent
+        from src.models.email import RawEmail
+        import httpx
+        from src.config import get_settings
 
-            classifier = ClassifierAgent()
-            summarizer = SummarizerAgent()
+        classifier = ClassifierAgent()
+        summarizer = SummarizerAgent()
+        settings = get_settings()
+        processed_count = 0
 
-            processed_count = 0
+        async with session_factory() as session2:
+            from src.models.repositories import ProcessedEmailRepository as PR2
+            repo2 = PR2(session2)
 
-            async with session_factory() as session2:
-                from src.models.orm import DraftReply as DraftReplyORM
-                repo2 = ProcessedEmailRepository(session2)
+            for email_data in demo_emails:
+                try:
+                    raw = RawEmail(
+                        provider_message_id=email_data["provider_message_id"],
+                        sender=email_data["sender"],
+                        subject=email_data["subject"],
+                        body=email_data["body"],
+                        timestamp=datetime.now(timezone.utc),
+                        provider=email_data["provider"],
+                    )
 
-                for email_data in demo_emails_data:
+                    # --- Etapa 1: Classificação ---
+                    classification = await classifier.classify(raw)
+                    email_record = await repo2.get_by_provider_message_id(email_data["provider_message_id"])
+                    if not email_record:
+                        continue
+
+                    await repo2.update_classification(
+                        email_record.id,
+                        category=classification.category.value,
+                        priority=classification.priority.value,
+                        confidence=classification.confidence,
+                        flagged_for_review=classification.flagged_for_review,
+                    )
+
+                    # --- Etapa 2: Sumarização ---
                     try:
-                        raw = RawEmail(
-                            provider_message_id=email_data["provider_message_id"],
-                            sender=email_data["sender"],
-                            subject=email_data["subject"],
-                            body=email_data["body"],
-                            timestamp=datetime.now(timezone.utc),
-                            provider=email_data["provider"],
-                        )
-
-                        # --- Etapa 1: Classificação ---
-                        classification = await classifier.classify(raw)
-
-                        email_record = await repo2.get_by_provider_message_id(
-                            email_data["provider_message_id"]
-                        )
-                        if not email_record:
-                            continue
-
-                        await repo2.update_classification(
+                        summary_result = await summarizer.summarize(raw)
+                        await repo2.update_summary(
                             email_record.id,
-                            category=classification.category.value,
-                            priority=classification.priority.value,
-                            confidence=classification.confidence,
-                            flagged_for_review=classification.flagged_for_review,
+                            summary=summary_result.summary,
+                            action_items=summary_result.action_items,
+                            summary_is_fallback=summary_result.is_fallback,
                         )
+                    except Exception as e:
+                        logger.warning("Demo summarization failed: %s", e)
 
-                        # --- Etapa 2: Sumarização ---
-                        try:
-                            summary_result = await summarizer.summarize(raw)
-                            await repo2.update_summary(
-                                email_record.id,
-                                summary=summary_result.summary,
-                                action_items=summary_result.action_items,
-                                summary_is_fallback=summary_result.is_fallback,
-                            )
-                        except Exception as e:
-                            logger.warning("Demo summarization failed for %s: %s", email_data["subject"], e)
+                    # --- Etapa 3: Gerar draft_reply (resposta sugerida para aprovar/rejeitar) ---
+                    try:
+                        from openai import AsyncOpenAI
+                        from src.models.orm import DraftReply as DraftReplyORM
 
-                        # --- Etapa 3: Gerar resposta (draft_reply) ---
-                        try:
-                            from openai import AsyncOpenAI
-                            from src.config import get_settings
-
-                            settings = get_settings()
-                            client = AsyncOpenAI(api_key=settings.openai_api_key)
-
-                            response_prompt = f"""Você é um assistente que gera respostas profissionais para e-mails.
+                        ai_client = AsyncOpenAI(api_key=settings.openai_api_key)
+                        response_prompt = f"""Você é um assistente que gera respostas profissionais para e-mails.
 Gere uma resposta para o seguinte e-mail:
 
 De: {email_data["sender"]}
@@ -267,100 +262,96 @@ Instruções:
 Retorne APENAS JSON:
 {{"reply_body": "<texto da resposta>", "suggested_subject": "<assunto sugerido>"}}"""
 
-                            response = await client.chat.completions.create(
-                                model=settings.openai_model,
-                                messages=[{"role": "user", "content": response_prompt}],
-                            )
-                            raw_output = response.choices[0].message.content or ""
-
-                            import json
-                            import re
-                            cleaned = raw_output.strip()
-                            if cleaned.startswith("```"):
-                                cleaned = re.sub(r'^```(?:json)?\s*', '', cleaned)
-                                cleaned = re.sub(r'\s*```$', '', cleaned)
-
-                            parsed = json.loads(cleaned)
-                            reply_body = parsed.get("reply_body", "Obrigado pelo contato.")
-                            suggested_subject = parsed.get("suggested_subject", f"Re: {email_data['subject']}")[:150]
-
-                            from src.services.guardrails import validate_response
-                            guardrail_check = validate_response(reply_body)
-
-                            draft_status = "pending"
-                            if not guardrail_check.is_safe:
-                                reply_body = f"⚠️ GUARDRAIL: {guardrail_check.message}\n\n---\n\n{reply_body}"
-
-                            draft = DraftReplyORM(
-                                email_id=email_record.id,
-                                reply_body=reply_body,
-                                suggested_subject=suggested_subject,
-                                referenced_email_ids=[],
-                                status=draft_status,
-                                generated_at=datetime.utcnow(),
-                            )
-                            session2.add(draft)
-
-                        except Exception as e:
-                            logger.warning("Demo response generation failed for %s: %s", email_data["subject"], e)
-
-                        # Marcar como completo
-                        await repo2.update_workflow_stage(
-                            email_record.id, workflow_stage="completed"
+                        ai_response = await ai_client.chat.completions.create(
+                            model=settings.openai_model,
+                            messages=[{"role": "user", "content": response_prompt}],
                         )
-                        processed_count += 1
+                        raw_output = ai_response.choices[0].message.content or ""
 
-                        # --- Disparar webhook Zapier ---
-                        try:
-                            import httpx
-                            from src.config import get_settings
-                            settings = get_settings()
-                            if settings.zapier_webhook_url:
-                                webhook_payload = {
-                                    "event_type": "email_processed",
-                                    "data": {
-                                        "email_id": str(email_record.id),
-                                        "timestamp": datetime.utcnow().isoformat(),
-                                        "email": {
-                                            "sender": email_data["sender"],
-                                            "subject": email_data["subject"],
-                                            "provider": email_data["provider"],
-                                        },
-                                        "classification": {
-                                            "category": classification.category.value,
-                                            "priority": classification.priority.value,
-                                            "confidence": classification.confidence,
-                                        },
-                                    },
-                                    "source": "demo_pipeline",
-                                }
-                                async with httpx.AsyncClient(timeout=5.0) as http_client:
-                                    resp = await http_client.post(
-                                        settings.zapier_webhook_url,
-                                        json=webhook_payload,
-                                        headers={"Content-Type": "application/json"},
-                                    )
-                                    logger.info("Zapier webhook sent for '%s': %s", email_data["subject"], resp.status_code)
-                        except Exception as e:
-                            logger.warning("Zapier webhook failed for '%s': %s", email_data["subject"], e)
+                        import json
+                        import re
+                        cleaned = raw_output.strip()
+                        if cleaned.startswith("```"):
+                            cleaned = re.sub(r'^```(?:json)?\s*', '', cleaned)
+                            cleaned = re.sub(r'\s*```$', '', cleaned)
 
-                    except ClassificationError as e:
-                        logger.warning("Demo classification failed: %s", e)
+                        parsed = json.loads(cleaned)
+                        reply_body = parsed.get("reply_body", "Obrigado pelo contato.")
+                        suggested_subject = parsed.get("suggested_subject", f"Re: {email_data['subject']}")[:150]
+
+                        from src.services.guardrails import validate_response
+                        guardrail_check = validate_response(reply_body)
+                        if not guardrail_check.is_safe:
+                            reply_body = f"⚠️ GUARDRAIL: {guardrail_check.message}\n\n---\n\n{reply_body}"
+
+                        draft = DraftReplyORM(
+                            email_id=email_record.id,
+                            reply_body=reply_body,
+                            suggested_subject=suggested_subject,
+                            referenced_email_ids=[],
+                            status="pending",
+                            generated_at=datetime.utcnow(),
+                        )
+                        session2.add(draft)
+                        logger.info("Draft reply adicionado para '%s'", email_data["subject"])
                     except Exception as e:
-                        logger.warning("Demo processing error: %s", e)
+                        logger.error("Demo draft_reply generation FAILED for '%s': %s", email_data["subject"], e, exc_info=True)
 
-                await session2.commit()
-                logger.info("Background pipeline completed: %d emails processed", processed_count)
+                    await repo2.update_workflow_stage(email_record.id, workflow_stage="completed")
+                    processed_count += 1
 
-        # Dispara pipeline em background sem bloquear a resposta
-        asyncio.create_task(run_pipeline_background(demo_emails))
+                    # --- Disparar webhook Zapier ---
+                    try:
+                        if settings.zapier_webhook_url:
+                            formatted_message = (
+                                f"📧 Email processado!\n"
+                                f"De: {email_data['sender']}\n"
+                                f"Assunto: {email_data['subject']}\n"
+                                f"Categoria: {classification.category.value}\n"
+                                f"Prioridade: {classification.priority.value}\n"
+                                f"Confiança: {int(classification.confidence * 100)}%"
+                            )
+                            webhook_payload = {
+                                "event_type": "email_processed",
+                                "message": formatted_message,
+                                "data": {
+                                    "email_id": str(email_record.id),
+                                    "timestamp": datetime.utcnow().isoformat(),
+                                    "email": {
+                                        "sender": email_data["sender"],
+                                        "subject": email_data["subject"],
+                                        "provider": email_data["provider"],
+                                    },
+                                    "classification": {
+                                        "category": classification.category.value,
+                                        "priority": classification.priority.value,
+                                        "confidence": classification.confidence,
+                                    },
+                                },
+                                "source": "demo_pipeline",
+                            }
+                            async with httpx.AsyncClient(timeout=5.0) as http_client:
+                                resp = await http_client.post(
+                                    settings.zapier_webhook_url,
+                                    json=webhook_payload,
+                                    headers={"Content-Type": "application/json"},
+                                )
+                                logger.info("Zapier webhook sent for '%s': status=%s", email_data["subject"], resp.status_code)
+                    except Exception as e:
+                        logger.warning("Zapier webhook failed for '%s': %s", email_data["subject"], e)
+
+                except ClassificationError as e:
+                    logger.warning("Demo classification failed: %s", e)
+                except Exception as e:
+                    logger.warning("Demo processing error: %s", e)
+
+            await session2.commit()
 
         return FetchAcknowledgment(
             status="demo_complete",
             task_id=None,
-            message=f"{inserted} e-mails inseridos. Pipeline de IA rodando em background (classificar + resumir + resposta).",
+            message=f"{inserted} e-mails inseridos, {processed_count} processados (classificar + resumir + resposta).",
         )
-
     except Exception as exc:
         logger.error("Demo failed: %s", exc)
         return FetchAcknowledgment(
